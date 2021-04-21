@@ -24,17 +24,18 @@ void *generateRequest(){
 
     logEvent(IWANT,msg);
 
-
     printf("TODO\n");
     return NULL;
 }
 
 int main(int argc, char *argv[]){
-    srand(time(NULL));
+
     char *fifoname;
     int nsecs;
     time_t start_time = time(0);
     pthread_t tid = 1;
+
+    srand(time(NULL));
 
     if( parseCommand(argc ,argv , &fifoname , &nsecs) != 0){
         fprintf(stderr, "client: parsing error\n");
