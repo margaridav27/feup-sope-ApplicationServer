@@ -20,30 +20,30 @@ void logIwant(Message msg) {
     time_t elapsed;
     time(&elapsed);
 
-    printf("%ld ; %d ; %d ; %d ; %ld; %d ; IWANT",
-    elapsed, msg.rid, msg.tskload, getpid(), msg.tid, msg.tskres);
+    printf("%ld ; %d ; %d ; %d ; %ld; %d ; IWANT\n",
+    elapsed, msg.rid, msg.tskload, msg.pid, msg.tid, msg.tskres);
 }
 
 void logGotrs(Message msg) {
     time_t elapsed;
     time(&elapsed);
 
-    printf("%ld ; %d ; %d ; %d ; %ld ; %d ; GOTRS",
-    elapsed, msg.rid, msg.tskload, getpid(), msg.tid, msg.tskres);
+    printf("%ld ; %d ; %d ; %d ; %ld ; %d ; GOTRS\n",
+    elapsed, msg.rid, msg.tskload, msg.pid, msg.tid, msg.tskres);
 }
 
 void logClosd(Message msg) {
     time_t elapsed;
     time(&elapsed);
 
-    printf("%ld ; %d ; %d ; %d ; %ld ; %d ; CLOSD",
-    elapsed, msg.rid, msg.tskload, getpid(), msg.tid, msg.tskres);
+    printf("%ld ; %d ; %d ; %d ; %ld ; %d ; CLOSD\n",
+    elapsed, msg.rid, msg.tskload, msg.pid, msg.tid, msg.tskres);
 }
 
 void logGavup(Message msg) {
     time_t elapsed;
     time(&elapsed);
 
-    printf("%ld ; %d ; %d ; %d ; %ld ; %d ; GAVUP",
-    elapsed, msg.rid, msg.tskload, getpid(), msg.tid, msg.tskres);
+    printf("%ld ; %d ; %d ; %d ; %ld ; %d ; GAVUP\n",
+    elapsed, msg.rid, msg.tskload, msg.pid, msg.tid, msg.tskres);
 }
