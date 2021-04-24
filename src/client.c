@@ -7,11 +7,17 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <errno.h>
+
 #include "./include/parse.h"
 #include "./include/log.h"
 
 char *fifoName;
 bool closedService = false;
+bool closedClient = false;
+pthread_mutex_t writeMutex;
 
 int generateNumber(int min, int max){
 
@@ -23,9 +29,17 @@ int generateNumber(int min, int max){
 int writeToFifo(Message *msg){
     int fifo;
 
-    fifo = open(fifoName, O_WRONLY);
+
+    while ( (fifo = open(fifoName, O_WRONLY)) < 0);
+
+    pthread_mutex_lock(&writeMutex);
+    
     write(fifo, &msg, sizeof(msg));
+
+    pthread_mutex_unlock(&writeMutex);
+
     close(fifo);
+
 
     logEvent(IWANT,*msg);
 
@@ -46,15 +60,20 @@ int removePrivateFifo(char fifoPath[]){
 
     return 0;
 }
+
 int readFromFifo(Message *msg, char fifoPath[]){
     int fd = open(fifoPath, O_RDONLY);
-    int nbytes = 0;
+    int nbytes = -1;
+
     while(nbytes < 0){
+
         nbytes = read(fd, &msg, sizeof(msg));
-        printf("nbytes received %d", nbytes);
+        printf("reading");
+
     }
     //TODO: add mutex or lock operation 
     logEvent(GOTRS,*msg);
+    
     close(fd);
 
     return 0;
@@ -85,6 +104,7 @@ void *generateRequest(void * arg){
 
     //write to public fifo
     writeToFifo(&msg);
+    printf("fifo name %s\n", private_fifo);
 
     //read from private fifo
     readFromFifo(&res, private_fifo);
@@ -102,12 +122,44 @@ void *generateRequest(void * arg){
     return NULL;
 }
 
+int generateThreads(int nsecs, time_t start_time){
+
+    int request_number = 0;
+    pthread_t tid;
+
+    pthread_t existing_threads[1000000];
+
+    //creat threads while time has not pass and service is open
+    while(time(0) - start_time < nsecs && !closedService){
+
+        pthread_create(&tid, NULL, generateRequest,(void*) &request_number);
+        existing_threads[request_number] = tid;
+        usleep(generateNumber(100,200));
+        request_number += 1;
+
+    }
+
+    closedClient = true;
+
+    //check if thread is finished
+    /*for(int i = 0 ; i < request_number; i++){
+        if (pthread_kill(existing_threads[i], 0) == ESRCH){
+            pthread_cancel(existing_threads[i]);
+        }
+    }*/
+
+    for(int i = 0 ; i < request_number; i++){
+        pthread_join(existing_threads[i],NULL);
+    }
+
+    return 0;
+
+}
 
 int main(int argc, char *argv[]){
 
-    int nsecs, requestNumber = 0;
+    int nsecs;
     time_t start_time = time(0);
-    pthread_t tid;
 
     srand(time(NULL));
 
@@ -116,16 +168,14 @@ int main(int argc, char *argv[]){
         return 1;
     }
     
-    //creat threads while time has not pass and service is open
-    while(time(0) - start_time < nsecs && !closedService){
-
-        pthread_create(&tid, NULL, generateRequest,(void*) &requestNumber);
-        usleep(generateNumber(10,50));
-        requestNumber += 1;
-
+    if( pthread_mutex_init(&writeMutex, NULL) != 0){
+        printf("Mutex initialization error\n");
+        return 1;
     }
 
+    generateThreads(nsecs, start_time);
 
+    pthread_mutex_destroy(&writeMutex);
 
     return 0;
 }

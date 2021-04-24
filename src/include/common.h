@@ -7,9 +7,9 @@
 
 typedef struct {
 	int rid; 		// request id
+	int tskload;	// task load
 	pid_t pid; 		// process id
 	pthread_t tid;	// thread id
-	int tskload;	// task load
 	int tskres;		// task result
 } Message;
 
