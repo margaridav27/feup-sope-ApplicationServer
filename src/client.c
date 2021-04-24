@@ -114,6 +114,8 @@ int generateThreads(int nsecs, time_t start_time) {
 
     //creat threads while time has not passed and service is open
     while (time(0) - start_time < nsecs && !closedService) {
+
+        // COMBACK: attention to the maximum number of threads that can be created!
         pthread_create(&tid, NULL, generateRequest, (void *)&request_number);
         existing_threads[request_number] = tid;
         usleep(generateNumber(100, 200));
@@ -122,7 +124,7 @@ int generateThreads(int nsecs, time_t start_time) {
 
     closedClient = true;
 
-    //check if thread is finished
+    // TODO: check if thread is finished
     /*for(int i = 0 ; i < request_number; i++){
         if (pthread_kill(existing_threads[i], 0) == ESRCH){
             pthread_cancel(existing_threads[i]);
