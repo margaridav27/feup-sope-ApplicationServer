@@ -17,75 +17,62 @@
 char *fifoName;
 bool closedService = false;
 bool closedClient = false;
-pthread_mutex_t writeMutex;
 
-int generateNumber(int min, int max)
-{
-
+int generateNumber(int min, int max) {
     int number = rand() % (max - min + 1) + min;
-
     return number;
 }
 
-int writeToPublicFifo(Message *msg)
-{
+int writeToPublicFifo(Message *msg) {
     int fifo;
 
     while ((fifo = open(fifoName, O_WRONLY)) < 0)
         ;
 
-    pthread_mutex_lock(&writeMutex);
-
-    write(fifo, &msg, sizeof(msg));
-
-    pthread_mutex_unlock(&writeMutex);
-
+    if (write(fifo, &msg, sizeof(msg)) != 0) {
+        perror("write");
+        return 1;
+    }
     close(fifo);
 
     logEvent(IWANT, *msg);
-
     return 0;
 }
 
-int creatPrivateFifo(char fifoPath[])
-{
-
-    //create private fifo
-    mkfifo(fifoPath, 0666);
-
-    return 0;
-}
-
-int removePrivateFifo(char fifoPath[])
-{
-
-    remove(fifoPath);
-
-    return 0;
-}
-
-int readFromPrivateFifo(Message *msg, char fifoPath[])
-{
-    int fd = open(fifoPath, O_RDONLY);
-    int nbytes = -1;
-
-    while (nbytes < 0)
-    {
-
-        nbytes = read(fd, &msg, sizeof(msg));
-        printf("reading");
+int creatPrivateFifo(char fifoPath[]) {
+    if (mkfifo(fifoPath, 0666) != 0) {
+        perror("mkfifo");
+        return 1;
     }
-    //TODO: add mutex or lock operation
-    logEvent(GOTRS, *msg);
+    return 0;
+}
 
+int removePrivateFifo(char fifoPath[]) {
+    if (remove(fifoPath) != 0) {
+        perror("remove");
+        return 1;
+    }
+    return 0;
+}
+
+int readFromPrivateFifo(Message *msg, char fifoPath[]) {
+    int fd;
+    int nbytes = -1;
+    
+    while ((fd = open(fifoPath, O_RDONLY)) < 0)
+        ;
+    
+    //TODO: add mutex or lock operation
+    while (nbytes < 0) {
+        nbytes = read(fd, &msg, sizeof(msg));
+    }
     close(fd);
 
+    logEvent(GOTRS, *msg);
     return 0;
 }
 
-int namePrivateFifo(Message *msg, char fifoPath[])
-{
-    //buil private fifo path
+int namePrivateFifo(Message *msg, char fifoPath[]) {
     snprintf(fifoPath, 250, "/tmp/%u.%lu", msg->pid, msg->tid);
     return 0;
 }
@@ -109,8 +96,7 @@ void *generateRequest(void *arg) {
 
     readFromPrivateFifo(&res, private_fifo);
 
-    // TODO
-    //verify if service is still open
+    // TODO: verify if service is still open
     /*if(res.tskres == -1){
         closedService = true;
     }*/
@@ -162,14 +148,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (pthread_mutex_init(&writeMutex, NULL) != 0) {
-        fprintf(stderr, "client: mutex init error\n");
-        return 1;
-    }
-
     generateThreads(nsecs, start_time);
-
-    pthread_mutex_destroy(&writeMutex);
 
     return 0;
 }
