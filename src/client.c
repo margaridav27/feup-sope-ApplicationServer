@@ -35,23 +35,24 @@ int fifoExists (char fifo_path[]) {
 }
 
 int writeToPublicFifo(Message *msg) {
-    int fifo;
+    int fifo, ret_val = 0;
 
     pthread_mutex_lock(&writeMutex);
 
     if(!fifoExists(fifoName)) {
+
         fprintf(stderr, "fifo %s does not exist\n", fifoName);
-        return 1;
+        ret_val = 1;
+
     } else {
-        while ((fifo = open(fifoName, O_WRONLY)) < 0) 
-            ; //sync
+        while ((fifo = open(fifoName, O_WRONLY)) < 0); //sync
         write(fifo, msg, sizeof(Message));
         close(fifo);
     }
 
     pthread_mutex_unlock(&writeMutex);
 
-    return 0;
+    return ret_val;
 }
 
 int namePrivateFifo(Message *msg, char fifoPath[]){
@@ -65,20 +66,24 @@ int creatPrivateFifo(char fifoPath[]){
 }
 
 int removePrivateFifo(char fifoPath[]){
+
     remove(fifoPath);
+
     return 0;
 }
 
 int readFromPrivateFifo(Message *msg, char fifoPath[]) {
     int fd;
     
-    while ((fd = open(fifoPath, O_RDONLY)) < 0) 
-        ; //sync
-    while (read(fd, msg, sizeof(Message)) <= 0 && !clientTimeout())
-        ; //as long as client is still open, will try to read
+    while ((fd = open(fifoPath, O_RDONLY)) < 0); //sync
+
+    //as long as client is still open, will try to read
+    while (!clientTimeout() && read(fd, msg, sizeof(Message)) <= 0);
+
     close(fd);
 
     if (clientTimeout()) return 1; //got out of the cycle due to client's timeout
+
     return 0; //got out of the cycle due to msg being successfully received
 }
 
@@ -94,29 +99,40 @@ void *generateRequest(void * arg){
     msg.tskres = -1;
 
     //to receive from server
-    Message res;
+    //Message res;
     
     namePrivateFifo(&msg, private_fifo);
     creatPrivateFifo(private_fifo);
 
     //server's public fifo was closed, client could not send request
     if (writeToPublicFifo(&msg) != 0) { 
+
         closedService = true;
-        pthread_exit(NULL); //terminates calling thread
+        printf("Erro while sending request\n");
+
     } else logEvent(IWANT, msg); //request sent successfully to server
 
     //client could no longer wait for server's response
-    if (readFromPrivateFifo(&res, private_fifo) != 0) {
-        logEvent(GAVUP, res); 
+
+    if (!closedService && readFromPrivateFifo(&msg, private_fifo) != 0) {
+
+        logEvent(GAVUP, msg); 
+        
     } else {
+
         //client's request was not attended due to server's timeout
-        if (res.tskres == -1){
+        if (msg.tskres == -1 || closedService){
             closedService = true;
-            logEvent(CLOSD, res); 
+            logEvent(CLOSD, msg); 
+
+        } else{
+            //client's request successfully attended by the server
+            logEvent(GOTRS, msg); 
         }
-        //client's request successfully attended by the server
-        logEvent(GOTRS, res); 
+
     }
+
+    removePrivateFifo(private_fifo);
     
     return NULL;
 }
