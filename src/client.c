@@ -47,7 +47,6 @@ int writeToPublicFifo(Message *msg) {
             ; //sync
         write(fifo, msg, sizeof(Message));
         close(fifo);
-        logEvent(IWANT,*msg);
     }
 
     pthread_mutex_unlock(&writeMutex);
@@ -104,7 +103,7 @@ void *generateRequest(void * arg){
     if (writeToPublicFifo(&msg) != 0){ 
         closedService = true;
         pthread_exit(NULL); //terminates calling thread
-    }
+    } else logEvent(IWANT, msg);
 
     //client could no longer wait for server's response
     if (readFromPrivateFifo(&res, private_fifo) != 0) {
