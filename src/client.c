@@ -30,15 +30,16 @@ int writeToFifo(Message *msg){
     int fifo;
 
 
-    while ( (fifo = open(fifoName, O_WRONLY)) < 0);
-
     pthread_mutex_lock(&writeMutex);
+
+    fifo = open(fifoName, O_WRONLY);
     
-    write(fifo, &msg, sizeof(msg));
+    write(fifo, msg, sizeof(Message));
+
+    close(fifo);
 
     pthread_mutex_unlock(&writeMutex);
 
-    close(fifo);
 
 
     logEvent(IWANT,*msg);
@@ -63,15 +64,16 @@ int removePrivateFifo(char fifoPath[]){
 
 int readFromFifo(Message *msg, char fifoPath[]){
     int fd = open(fifoPath, O_RDONLY);
-    int nbytes = -1;
+    //int nbytes = -1;
 
-    while(nbytes < 0){
+    /*while(nbytes < 0){
 
         nbytes = read(fd, &msg, sizeof(msg));
         printf("reading");
 
-    }
-    //TODO: add mutex or lock operation 
+    }*/
+    read(fd, msg, sizeof(Message));
+
     logEvent(GOTRS,*msg);
     
     close(fd);
@@ -104,7 +106,6 @@ void *generateRequest(void * arg){
 
     //write to public fifo
     writeToFifo(&msg);
-    printf("fifo name %s\n", private_fifo);
 
     //read from private fifo
     readFromFifo(&res, private_fifo);
@@ -134,7 +135,7 @@ int generateThreads(int nsecs, time_t start_time){
 
         pthread_create(&tid, NULL, generateRequest,(void*) &request_number);
         existing_threads[request_number] = tid;
-        usleep(generateNumber(100,200));
+        usleep(generateNumber(1000,5000));
         request_number += 1;
 
     }
