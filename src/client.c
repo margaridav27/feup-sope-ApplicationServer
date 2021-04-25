@@ -17,7 +17,7 @@
 int nsecs;
 time_t start_time;
 char *fifoName;
-bool closedService = false;
+bool closed_server = false;
 pthread_mutex_t writeMutex;
 pthread_mutex_t requestNumberMutex;
 
@@ -110,22 +110,22 @@ void *generateRequest(void * arg){
     //server's public fifo was closed, client could not send request
     if (writeToPublicFifo(&msg) != 0) { 
 
-        closedService = true;
+        closed_server = true;
         printf("Erro while sending request\n");
 
     } else logEvent(IWANT, msg); //request sent successfully to server
 
     //client could no longer wait for server's response
 
-    if (!closedService && readFromPrivateFifo(&msg, private_fifo) != 0) {
+    if (!closed_server && readFromPrivateFifo(&msg, private_fifo) != 0) {
         
         logEvent(GAVUP, msg); 
         
     } else {
 
         //client's request was not attended due to server's timeout
-        if (msg.tskres == -1 || closedService){
-            closedService = true;
+        if (msg.tskres == -1 || closed_server){
+            closed_server = true;
             logEvent(CLOSD, msg); 
 
         } else{
@@ -145,7 +145,7 @@ void generateThreads() {
     pthread_t tid;
     pthread_t existing_threads[1000000];
 
-    while(!clientTimeout() && !closedService) {
+    while(!clientTimeout() && !closed_server) {
 
         pthread_mutex_lock(&requestNumberMutex);
         pthread_create(&tid, NULL, generateRequest,(void*) &request_number);
