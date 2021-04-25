@@ -18,8 +18,8 @@ int nsecs;
 time_t start_time;
 char *fifoName;
 bool closed_server = false;
-pthread_mutex_t writeMutex;
-pthread_mutex_t requestNumberMutex;
+pthread_mutex_t write_mutex;
+pthread_mutex_t request_number_mutex;
 
 bool clientTimeout() {
     return (time(0) - start_time >= nsecs);
@@ -38,7 +38,7 @@ int fifoExists (char fifo_path[]) {
 int writeToPublicFifo(Message *msg) {
     int fifo, ret_val = 0;
 
-    pthread_mutex_lock(&writeMutex);
+    pthread_mutex_lock(&write_mutex);
 
     if(!fifoExists(fifoName)) {
 
@@ -51,40 +51,36 @@ int writeToPublicFifo(Message *msg) {
         close(fifo);
     }
 
-    pthread_mutex_unlock(&writeMutex);
+    pthread_mutex_unlock(&write_mutex);
 
     return ret_val;
 }
 
-int namePrivateFifo(Message *msg, char fifoPath[]){
-    snprintf (fifoPath, 250, "/tmp/%u.%lu",msg->pid,msg->tid);
+int namePrivateFifo(Message *msg, char fifo_path[]){
+    snprintf (fifo_path, 250, "/tmp/%u.%lu",msg->pid,msg->tid);
     return 0;
 }
 
-int creatPrivateFifo(char fifoPath[]){
-    mkfifo(fifoPath, 0666);
+int creatPrivateFifo(char fifo_path[]){
+    mkfifo(fifo_path, 0666);
     return 0;
 }
 
-int removePrivateFifo(char fifoPath[]){
-
-    remove(fifoPath);
-
+int removePrivateFifo(char fifo_path[]){
+    remove(fifo_path);
     return 0;
 }
 
-int readFromPrivateFifo(Message *msg, char fifoPath[]) {
+int readFromPrivateFifo(Message *msg, char fifo_path[]) {
     int fd;
     
-    while ((fd = open(fifoPath, O_RDONLY | O_NONBLOCK)) < 0); //sync
+    while ((fd = open(fifo_path, O_RDONLY | O_NONBLOCK)) < 0); //sync
 
     //as long as client is still open, will try to read
     while (!clientTimeout() && read(fd, msg, sizeof(Message)) <= 0);
-
     close(fd);
 
     if (clientTimeout()) return 1; //got out of the cycle due to client's timeout
-
     return 0; //got out of the cycle due to msg being successfully received
 }
 
@@ -99,7 +95,7 @@ void *generateRequest(void * arg){
     msg.tskload = generateNumber(1, 9);
     msg.tskres = -1;
 
-    pthread_mutex_unlock(&requestNumberMutex);
+    pthread_mutex_unlock(&request_number_mutex);
 
     //to receive from server
     //Message res;
@@ -109,30 +105,24 @@ void *generateRequest(void * arg){
 
     //server's public fifo was closed, client could not send request
     if (writeToPublicFifo(&msg) != 0) { 
-
         closed_server = true;
         printf("Erro while sending request\n");
 
     } else logEvent(IWANT, msg); //request sent successfully to server
 
     //client could no longer wait for server's response
-
     if (!closed_server && readFromPrivateFifo(&msg, private_fifo) != 0) {
-        
         logEvent(GAVUP, msg); 
         
     } else {
-
         //client's request was not attended due to server's timeout
         if (msg.tskres == -1 || closed_server){
             closed_server = true;
             logEvent(CLOSD, msg); 
-
         } else{
             //client's request successfully attended by the server
             logEvent(GOTRS, msg); 
         }
-
     }
 
     removePrivateFifo(private_fifo);
@@ -146,14 +136,11 @@ void generateThreads() {
     pthread_t existing_threads[1000000];
 
     while(!clientTimeout() && !closed_server) {
-
-        pthread_mutex_lock(&requestNumberMutex);
+        pthread_mutex_lock(&request_number_mutex);
         pthread_create(&tid, NULL, generateRequest,(void*) &request_number);
-
         existing_threads[request_number] = tid;
         usleep(generateNumber(1000, 5000));
         ++request_number;
-
     }
 
     for(int i = 0 ; i < request_number; ++i){
@@ -172,20 +159,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    if (pthread_mutex_init(&writeMutex, NULL) != 0){
+    if (pthread_mutex_init(&write_mutex, NULL) != 0){
         fprintf(stderr, "client: mutex init error\n");
         return 1;
     }
 
-    if (pthread_mutex_init(&requestNumberMutex, NULL) != 0){
+    if (pthread_mutex_init(&request_number_mutex, NULL) != 0){
         fprintf(stderr, "client: mutex init error\n");
         return 1;
     }
 
     generateThreads();
 
-    pthread_mutex_destroy(&writeMutex);
-    pthread_mutex_destroy(&requestNumberMutex);
+    pthread_mutex_destroy(&write_mutex);
+    pthread_mutex_destroy(&request_number_mutex);
 
     return 0;
 }
