@@ -100,10 +100,10 @@ void *generateRequest(void * arg){
     creatPrivateFifo(private_fifo);
 
     //server's public fifo was closed, client could not send request
-    if (writeToPublicFifo(&msg) != 0){ 
+    if (writeToPublicFifo(&msg) != 0) { 
         closedService = true;
         pthread_exit(NULL); //terminates calling thread
-    } else logEvent(IWANT, msg);
+    } else logEvent(IWANT, msg); //request sent successfully to server
 
     //client could no longer wait for server's response
     if (readFromPrivateFifo(&res, private_fifo) != 0) {
