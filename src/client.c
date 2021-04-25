@@ -26,25 +26,34 @@ int generateNumber(int min, int max){
     return number;
 }
 
+int fifoExists (char fifo_path[]){
+    struct stat buff;
+    return (stat(fifo_path, &buff) == 0);
+}
+
 int writeToFifo(Message *msg){
     int fifo;
-
+    int ret_val = 0;
 
     pthread_mutex_lock(&writeMutex);
 
-    fifo = open(fifoName, O_WRONLY);
+    if(!fifoExists(fifoName)){
+        printf("fifo %s does not exist\n",fifoName );
+        ret_val = 1;
 
-    write(fifo, msg, sizeof(Message));
+    }else{
+        fifo = open(fifoName, O_WRONLY);
 
-    close(fifo);
+        write(fifo, msg, sizeof(Message));
+
+        close(fifo);
+
+        logEvent(IWANT,*msg);
+    }
 
     pthread_mutex_unlock(&writeMutex);
 
-
-
-    logEvent(IWANT,*msg);
-
-    return 0;
+    return ret_val;
 }
 
 int creatPrivateFifo(char fifoPath[]){
@@ -105,7 +114,12 @@ void *generateRequest(void * arg){
     creatPrivateFifo(private_fifo);
 
     //write to public fifo
-    writeToFifo(&msg);
+    if( writeToFifo(&msg) != 0){
+        printf("Could not write to public fifo\n");
+        printf("Ending Client process\n");
+        closedService = true;
+        pthread_exit(NULL);
+    }
 
     //read from private fifo
     readFromFifo(&res, private_fifo);
@@ -116,9 +130,9 @@ void *generateRequest(void * arg){
 
 
     //verify if service stills open
-    /*if(res.tskres == -1){
+    if(res.tskres == -1){
         closedService = true;
-    }*/
+    }
 
     return NULL;
 }
@@ -141,6 +155,7 @@ int generateThreads(int nsecs, time_t start_time){
     }
 
     closedClient = true;
+    printf("client closed\n");
 
     //check if thread is finished
     /*for(int i = 0 ; i < request_number; i++){
