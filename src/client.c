@@ -41,10 +41,8 @@ int writeToPublicFifo(Message *msg) {
     pthread_mutex_lock(&write_mutex);
 
     if(!fifoExists(fifoName)) {
-
         fprintf(stderr, "fifo %s does not exist\n", fifoName);
         ret_val = 1;
-
     } else {
         while ((fifo = open(fifoName, O_WRONLY)) < 0); //sync
         write(fifo, msg, sizeof(Message));
@@ -116,10 +114,10 @@ void *generateRequest(void * arg){
         
     } else {
         //client's request was not attended due to server's timeout
-        if (msg.tskres == -1 || closed_server){
+        if (msg.tskres == -1 || closed_server) {
             closed_server = true;
             logEvent(CLOSD, msg); 
-        } else{
+        } else {
             //client's request successfully attended by the server
             logEvent(GOTRS, msg); 
         }
