@@ -33,7 +33,7 @@ int writeToFifo(Message *msg){
     pthread_mutex_lock(&writeMutex);
 
     fifo = open(fifoName, O_WRONLY);
-    
+
     write(fifo, msg, sizeof(Message));
 
     close(fifo);
