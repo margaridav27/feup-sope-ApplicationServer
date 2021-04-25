@@ -19,6 +19,7 @@ time_t start_time;
 char *fifoName;
 bool closedService = false;
 pthread_mutex_t writeMutex;
+pthread_mutex_t requestNumberMutex;
 
 bool clientTimeout() {
     return (time(0) - start_time >= nsecs);
@@ -75,7 +76,7 @@ int removePrivateFifo(char fifoPath[]){
 int readFromPrivateFifo(Message *msg, char fifoPath[]) {
     int fd;
     
-    while ((fd = open(fifoPath, O_RDONLY)) < 0); //sync
+    while ((fd = open(fifoPath, O_RDONLY | O_NONBLOCK)) < 0); //sync
 
     //as long as client is still open, will try to read
     while (!clientTimeout() && read(fd, msg, sizeof(Message)) <= 0);
@@ -98,6 +99,8 @@ void *generateRequest(void * arg){
     msg.tskload = generateNumber(1, 9);
     msg.tskres = -1;
 
+    pthread_mutex_unlock(&requestNumberMutex);
+
     //to receive from server
     //Message res;
     
@@ -115,7 +118,7 @@ void *generateRequest(void * arg){
     //client could no longer wait for server's response
 
     if (!closedService && readFromPrivateFifo(&msg, private_fifo) != 0) {
-
+        
         logEvent(GAVUP, msg); 
         
     } else {
@@ -143,10 +146,14 @@ void generateThreads() {
     pthread_t existing_threads[1000000];
 
     while(!clientTimeout() && !closedService) {
+
+        pthread_mutex_lock(&requestNumberMutex);
         pthread_create(&tid, NULL, generateRequest,(void*) &request_number);
+
         existing_threads[request_number] = tid;
         usleep(generateNumber(1000, 5000));
         ++request_number;
+
     }
 
     for(int i = 0 ; i < request_number; ++i){
@@ -157,7 +164,8 @@ void generateThreads() {
 int main(int argc, char *argv[]) {
     start_time = time(0);
 
-    srand(time(NULL));
+    //srand(time(NULL));
+    srand(0);
 
     if (parseCommand(argc ,argv , &fifoName , &nsecs) != 0){
         fprintf(stderr, "client: parsing error\n");
@@ -169,9 +177,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (pthread_mutex_init(&requestNumberMutex, NULL) != 0){
+        fprintf(stderr, "client: mutex init error\n");
+        return 1;
+    }
+
     generateThreads();
 
     pthread_mutex_destroy(&writeMutex);
+    pthread_mutex_destroy(&requestNumberMutex);
 
     return 0;
 }
