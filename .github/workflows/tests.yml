@@ -8,7 +8,9 @@ jobs:
       - name: Make
         run: make
       - name: Copy script
-        run: cp tests/script.sh .
+        run: |
+          cp tests/script.sh .
+          chmod +x script.sh
       - name: Run tests
         run: |
           for i in 1 2 3 4 5
