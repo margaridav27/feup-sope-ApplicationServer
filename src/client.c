@@ -101,7 +101,19 @@ void *generateRequest(void * arg){
     namePrivateFifo(&msg, private_fifo);
     creatPrivateFifo(private_fifo);
 
-    //server's public fifo was closed, client could not send request
+    if (writeToPublicFifo(&msg) == 0) { 
+        logEvent(IWANT, msg); //successfully sent the request
+        if (readFromPrivateFifo(&msg, private_fifo) != 0) { 
+            logEvent(GAVUP, msg); //client could no longer wait for server's response
+        } else {
+            if (msg.tskres == -1) {
+                logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
+                closed_server = true;
+            } else logEvent(GOTRS, msg); //client's request successfully attended by the server
+        }
+    } else closed_server = true; //server's public fifo was closed, client could not send request
+
+    /*
     if (writeToPublicFifo(&msg) != 0) { 
         closed_server = true;
         printf("Erro while sending request\n");
@@ -121,7 +133,7 @@ void *generateRequest(void * arg){
             //client's request successfully attended by the server
             logEvent(GOTRS, msg); 
         }
-    }
+    }*/
 
     removePrivateFifo(private_fifo);
     
