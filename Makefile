@@ -31,7 +31,7 @@ INCLUDE_FLAGS := $(addprefix -I, $(INCLUDE_DIRECTORIES)) -pthread
 CPPFLAGS := $(INCLUDE_FLAGS) -MMD -MP -DDELAY=0
 
 # Compiler flags
-CFLAGS := -Wall -Werror -Wpedantic -Wextra -std=gnu11
+CFLAGS := #-Wall -Werror -Wpedantic -Wextra -std=gnu11
 
 # Linker flags
 LDFLAGS := -pthread 
