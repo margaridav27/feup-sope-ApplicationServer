@@ -1,0 +1,16 @@
+name: Test 
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  xmod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Make
+        run: make
+      - name: Run Tests
+        run: ./script.sh 1
