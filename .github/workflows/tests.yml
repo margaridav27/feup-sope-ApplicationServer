@@ -1,17 +1,16 @@
 name: Test xmod
-on:
-  push: null
-  pull_request: null
-  workflow_dispatch: null
+on: [push, pull_request, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Run a multi-line script
+      - name: Make
+        run: make
+      - name: Copy script
+        run: cp tests/script.sh .
+      - name: Run tests
         run: |
-          cp tests/script.sh .
-          make
           for i in 1 2 3 4 5
           do 
             for j in 1 2 3
