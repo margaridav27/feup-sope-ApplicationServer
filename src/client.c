@@ -55,7 +55,7 @@ int writeToPublicFifo(const Message *msg) {
     }
 
     // COMBACK: This instruction causes the server to not terminate.
-    close(fd);
+    //close(fd);
 
     return 0;
 }
