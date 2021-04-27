@@ -134,19 +134,19 @@ void *generateRequest(void *arg) {
 }
 
 void generateThreads() {
-    int request_number = 0;
+    int request_number = -1;
     pthread_t tid;
     pthread_t existing_threads[1000000];
 
     while (remainingTime() > 0 && fifoExists(fifoName)) {
         pthread_mutex_lock(&request_number_mutex);
+        ++request_number;
         pthread_create(&tid, NULL, generateRequest, &request_number);
         existing_threads[request_number] = tid;
         usleep(generateNumber(1000, 5000));
-        ++request_number;
     }
 
-    for (int i = 0; i < request_number; ++i) {
+    for (int i = 0; i <= request_number; ++i) {
         pthread_join(existing_threads[i], NULL);
     }
 }
