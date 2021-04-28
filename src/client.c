@@ -17,12 +17,13 @@
 #include "./include/parse.h"
 #include "./include/log.h"
 
-int nsecs;
+size_t nsecs;
 time_t start_time;
 char *fifoName;
+int public;
 pthread_mutex_t write_mutex;
 
-int remainingTime() { return nsecs - (time(0) - start_time); }
+size_t remainingTime() { return nsecs - (time(0) - start_time); }
 
 int generateNumber(int min, int max) {
     assert(min < max);
@@ -36,25 +37,25 @@ int fifoExists(const char *fifo_path) {
 
 int writeToPublicFifo(const Message *msg) {
     if (msg == NULL) return -1;
-
     pthread_mutex_lock(&write_mutex);
-    if (!fifoExists(fifoName)) return -1;
 
-    // This call shall block until the FIFO is opened for writing by the server.
-    int fd = open(fifoName, O_WRONLY);
-    pthread_mutex_unlock(&write_mutex);
-    if (fd < 0) {
-        perror("client: error opening public fifo");
+    struct pollfd fd;
+    const size_t kmsec = remainingTime() * 1000;
+
+    fd.fd = public;
+    fd.events = POLLOUT;
+    int r = poll(&fd, 1, kmsec);
+    if (r < 0) {
+        perror("client: error opening private fifo");
         return -1;
     }
 
-    if (write(fd, msg, sizeof(*msg)) < 0) {
+    if ((fd.revents & POLLOUT) && write(public, msg, sizeof(*msg)) < 0) {
         perror("client: error writing to public fifo");
         return -1;
     }
 
-    // COMBACK: This instruction causes the server to not terminate.
-    //close(fd);
+    pthread_mutex_unlock(&write_mutex);
 
     return 0;
 }
@@ -76,7 +77,7 @@ int removePrivateFifo(char fifo_path[]) {
 
 int readFromPrivateFifo(Message *msg, const char *fifo_path) {
     struct pollfd fd;
-    const int kmsec = remainingTime() * 1000;
+    const size_t kmsec = remainingTime() * 1000;
 
     int f = open(fifo_path, O_RDONLY);
     fd.fd = f;
@@ -174,9 +175,23 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (!fifoExists(fifoName)) return -1;
+
+    // This call shall block until the FIFO is opened for writing by the server.
+    while (remainingTime() > 0 && (public = open(fifoName, O_WRONLY | O_NONBLOCK)) < 0);
+
+    if (public < 0) {
+        fprintf(stderr,"client: opening private fifo: took too long\n");
+        return -1;
+    }
+
     generateThreads();
 
-    // Note: the bitwise or is used to ensure both commands run
+    if (close(public) < 0) {
+        perror("client: error closing private fifo");
+        return -1;
+    }
+
     if (pthread_mutex_destroy(&write_mutex)) {
         perror("client: mutex destroy");
         return 1;
