@@ -1,0 +1,26 @@
+name: Test
+on: [ push, pull_request, workflow_dispatch ]
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Make
+        run: make
+      - name: Copy script
+        run: |
+          cp tests/script.sh .
+          chmod +x script.sh
+      - name: Run tests
+        run: |
+          for i in {1..100}
+          do 
+            for j in {1..3}
+            do 
+                ./script.sh $j &> out.txt
+                if (grep -q "ERROR" out.txt >& /dev/null)
+                then 
+                  cat out.txt
+                fi
+            done
+          done

@@ -3,186 +3,200 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/ioctl.h>
+#include <string.h>
 #include <signal.h>
+#include <limits.h>
 #include <sys/types.h>
-#include <errno.h>
+#include <assert.h>
+#include <poll.h>
 
 #include "./include/parse.h"
 #include "./include/log.h"
 
-int nsecs;
+#define NUMBER_OF_THREADS 100000000
+size_t nsecs;
 time_t start_time;
 char *fifoName;
-bool closed_server = false;
+int public;
 pthread_mutex_t write_mutex;
-pthread_mutex_t request_number_mutex;
 
-bool clientTimeout() {
-    return (time(0) - start_time >= nsecs);
-}
+size_t remainingTime() { return nsecs - (time(0) - start_time); }
 
 int generateNumber(int min, int max) {
-    int number = rand() % (max - min + 1) + min;
-    return number;
+    assert(min < max);
+    return rand() % (max - min + 1) + min;
 }
 
-int fifoExists (char fifo_path[]) {
-    struct stat buff;
-    return (stat(fifo_path, &buff) == 0);
+int fifoExists(const char *fifo_path) {
+    if (fifo_path == NULL) return -1;
+    return access(fifo_path, F_OK) == 0;
 }
 
-int writeToPublicFifo(Message *msg) {
-    int fifo, ret_val = 0;
-
+int writeToPublicFifo(const Message *msg) {
+    if (msg == NULL) return -1;
     pthread_mutex_lock(&write_mutex);
 
-    if(!fifoExists(fifoName)) {
-        fprintf(stderr, "fifo %s does not exist\n", fifoName);
-        ret_val = 1;
-    } else {
-        while ((fifo = open(fifoName, O_WRONLY)) < 0); //sync
-        write(fifo, msg, sizeof(Message));
-        close(fifo);
+    struct pollfd fd;
+    const size_t kmsec = remainingTime() * 1000;
+
+    fd.fd = public;
+    fd.events = POLLOUT;
+    int r = poll(&fd, 1, (int) kmsec);
+    if (r < 0) {
+        perror("client: error opening private fifo");
+        return -1;
+    }
+
+    if ((fd.revents & POLLOUT) && write(public, msg, sizeof(*msg)) < 0) {
+        perror("client: error writing to public fifo");
+        return -1;
     }
 
     pthread_mutex_unlock(&write_mutex);
 
-    return ret_val;
-}
-
-int namePrivateFifo(Message *msg, char fifo_path[]){
-    snprintf (fifo_path, 250, "/tmp/%u.%lu",msg->pid,msg->tid);
     return 0;
 }
 
-int creatPrivateFifo(char fifo_path[]){
-    mkfifo(fifo_path, 0666);
-    return 0;
+int namePrivateFifo(const Message *msg, char *fifo_path) {
+    if (msg == NULL || fifo_path == NULL) return -1;
+    return snprintf(fifo_path, 250, "/tmp/%u.%lu", msg->pid, msg->tid) > 0;
 }
 
-int removePrivateFifo(char fifo_path[]){
-    remove(fifo_path);
-    return 0;
+int creatPrivateFifo(const char *fifo_path) {
+    if (fifo_path == NULL) return -1;
+    return mkfifo(fifo_path, 0666);
 }
 
-int readFromPrivateFifo(Message *msg, char fifo_path[]) {
-    int fd;
-    
-    while ((fd = open(fifo_path, O_RDONLY | O_NONBLOCK)) < 0); //sync
+int removePrivateFifo(char fifo_path[]) {
+    if (fifo_path == NULL) return -1;
+    return unlink(fifo_path);
+}
 
-    //as long as client is still open, will try to read
-    while (!clientTimeout() && read(fd, msg, sizeof(Message)) <= 0);
-    close(fd);
+int readFromPrivateFifo(Message *msg, const char *fifo_path) {
+    struct pollfd fd;
+    const size_t kmsec = remainingTime() * 1000;
 
-    if (clientTimeout()) return 1; //got out of the cycle due to client's timeout
+    int f = open(fifo_path, O_RDONLY);
+    fd.fd = f;
+    fd.events = POLL_IN;
+    int r = poll(&fd, 1, (int) kmsec);
+    if (r < 0) {
+        perror("client: error opening private fifo");
+        close(f);
+        return -1;
+    }
+
+    if (r == 0) {
+        close(f);
+        return 1;
+    }
+
+    if ((fd.revents & POLLIN) && read(f, msg, sizeof(Message)) < 0) {
+        perror("client: error reading from private fifo");
+        close(f);
+        return -1;
+    }
+
+    if (close(f) < 0) {
+        perror("client: error closing private fifo");
+        return -1;
+    }
+
     return 0; //got out of the cycle due to msg being successfully received
 }
 
-void *generateRequest(void * arg){
-    char private_fifo[250];
+void *generateRequest(void *p) {
+    if (p == NULL) return NULL;
+    Message *msg = p;
+    msg->tid = pthread_self();
 
-    //to send to server
-    Message msg;
-    msg.pid = getpid();
-    msg.tid = pthread_self();
-    msg.rid = *( (int*) arg);
-    msg.tskload = generateNumber(1, 9);
-    msg.tskres = -1;
+    char private_fifo[PATH_MAX] = {};
 
-    pthread_mutex_unlock(&request_number_mutex);
-
-    //to receive from server
-    //Message res;
-    
-    namePrivateFifo(&msg, private_fifo);
+    namePrivateFifo(msg, private_fifo);
     creatPrivateFifo(private_fifo);
 
-    if (writeToPublicFifo(&msg) == 0) { 
+    if (writeToPublicFifo(msg) == 0) {
         logEvent(IWANT, msg); //successfully sent the request
-        if (readFromPrivateFifo(&msg, private_fifo) != 0) { 
+        if (readFromPrivateFifo(msg, private_fifo) != 0) {
             logEvent(GAVUP, msg); //client could no longer wait for server's response
         } else {
-            if (msg.tskres == -1) {
-                logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
-                closed_server = true;
-            } else logEvent(GOTRS, msg); //client's request successfully attended by the server
+            if (msg->tskres == -1) logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
+            else logEvent(GOTRS, msg); //client's request successfully attended by the server
         }
-    } else closed_server = true; //server's public fifo was closed, client could not send request
-
-    /*
-    if (writeToPublicFifo(&msg) != 0) { 
-        closed_server = true;
-        printf("Erro while sending request\n");
-
-    } else logEvent(IWANT, msg); //request sent successfully to server
-
-    //client could no longer wait for server's response
-    if (!closed_server && readFromPrivateFifo(&msg, private_fifo) != 0) {
-        logEvent(GAVUP, msg); 
-        
-    } else {
-        //client's request was not attended due to server's timeout
-        if (msg.tskres == -1 || closed_server) {
-            closed_server = true;
-            logEvent(CLOSD, msg); 
-        } else {
-            //client's request successfully attended by the server
-            logEvent(GOTRS, msg); 
-        }
-    }*/
+    }
+    free(p);
 
     removePrivateFifo(private_fifo);
-    
     return NULL;
+}
+
+int assembleMessage(int request_number, Message *msg) {
+    if (msg == NULL) return -1;
+    *msg = (Message) {
+            .rid = request_number,
+            .pid = getpid(),
+            .tskload = generateNumber(1, 9),
+            .tskres = -1,
+    };
+    return 0;
 }
 
 void generateThreads() {
     int request_number = 0;
     pthread_t tid;
-    pthread_t existing_threads[1000000];
+    pthread_t *existing_threads = malloc(NUMBER_OF_THREADS * sizeof(*existing_threads));
+    if (existing_threads == NULL) return;
+    memset(existing_threads, 0, sizeof(*existing_threads));
 
-    while(!clientTimeout() && !closed_server) {
-        pthread_mutex_lock(&request_number_mutex);
-        pthread_create(&tid, NULL, generateRequest,(void*) &request_number);
+    while (request_number < NUMBER_OF_THREADS && remainingTime() > 0 && fifoExists(fifoName)) {
+        Message *msg = malloc(sizeof(*msg));
+        if (msg == NULL || assembleMessage(request_number, msg)) continue;
+        pthread_create(&tid, NULL, generateRequest, msg);
         existing_threads[request_number] = tid;
-        usleep(generateNumber(1000, 5000));
         ++request_number;
+        usleep(generateNumber(1000, 5000));
     }
 
-    for(int i = 0 ; i < request_number; ++i){
-        pthread_join(existing_threads[i], NULL);
-    }
+    for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
+    free(existing_threads);
 }
 
 int main(int argc, char *argv[]) {
-    start_time = time(0);
+    start_time = time(NULL);
+    printf("Initial time: %ld", start_time);
+    srand(start_time);
 
-    //srand(time(NULL));
-    srand(0);
-
-    if (parseCommand(argc ,argv , &fifoName , &nsecs) != 0){
+    if (parseCommand(argc, argv, &fifoName, &nsecs)) {
         fprintf(stderr, "client: parsing error\n");
         return 1;
     }
-    
-    if (pthread_mutex_init(&write_mutex, NULL) != 0){
-        fprintf(stderr, "client: mutex init error\n");
+
+    if (pthread_mutex_init(&write_mutex, NULL)) {
+        perror("client: mutex init");
         return 1;
     }
 
-    if (pthread_mutex_init(&request_number_mutex, NULL) != 0){
-        fprintf(stderr, "client: mutex init error\n");
-        return 1;
+    // This call shall block until the FIFO is opened for writing by the server.
+    while (remainingTime() > 0 && (public = open(fifoName, O_WRONLY | O_NONBLOCK)) < 0);
+
+    if (public < 0) {
+        fprintf(stderr, "client: opening private fifo: took too long\n");
+        return -1;
     }
 
     generateThreads();
 
-    pthread_mutex_destroy(&write_mutex);
-    pthread_mutex_destroy(&request_number_mutex);
+    if (close(public) < 0) {
+        perror("client: error closing private fifo");
+        return -1;
+    }
+
+    if (pthread_mutex_destroy(&write_mutex)) {
+        perror("client: mutex destroy");
+        return 1;
+    }
 
     return 0;
 }

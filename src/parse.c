@@ -7,7 +7,7 @@
 #include <sys/types.h> // mode_t
 #include <unistd.h> // getopt(), optind
 
-int parseCommand(int argc, char *argv[], char* fifoname[], int *nsecs) {
+int parseCommand(int argc, char *argv[], char* fifoname[], size_t *nsecs) {
 
     if (argv == NULL || fifoname == NULL || nsecs == NULL) return -1; 
 
@@ -15,8 +15,7 @@ int parseCommand(int argc, char *argv[], char* fifoname[], int *nsecs) {
     if (argc != 4){
         fprintf(stderr, "client: invalid number of arguments\n");
         return -1; 
-    } 
-
+    }
 
     char* timeString = "-t";
     if (strcmp(argv[1], timeString)){
@@ -24,15 +23,13 @@ int parseCommand(int argc, char *argv[], char* fifoname[], int *nsecs) {
         return -1; 
     }
 
-
     *nsecs = atoi(argv[2]);
     if(*nsecs <= 0){
         fprintf(stderr, "client: invalid time value\n");
         return 1;
     }
 
-
     *fifoname = argv[3];
-    
+
     return 0;
 }
