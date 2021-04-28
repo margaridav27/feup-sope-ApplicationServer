@@ -88,7 +88,10 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
         return -1;
     }
 
-    if (r == 0) return 1;
+    if (r == 0) {
+        close(f);
+        return 1;
+    }
 
     if ((fd.revents & POLLIN) && read(f, msg, sizeof(Message)) < 0) {
         perror("client: error reading from private fifo");
