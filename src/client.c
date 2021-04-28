@@ -3,20 +3,19 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <signal.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <assert.h>
-#include <errno.h>
 #include <poll.h>
 
 #include "./include/parse.h"
 #include "./include/log.h"
 
+#define NUMBER_OF_THREADS 100000000
 size_t nsecs;
 time_t start_time;
 char *fifoName;
@@ -44,7 +43,7 @@ int writeToPublicFifo(const Message *msg) {
 
     fd.fd = public;
     fd.events = POLLOUT;
-    int r = poll(&fd, 1, kmsec);
+    int r = poll(&fd, 1, (int) kmsec);
     if (r < 0) {
         perror("client: error opening private fifo");
         return -1;
@@ -110,8 +109,7 @@ void *generateRequest(void *p) {
     Message *msg = p;
     msg->tid = pthread_self();
 
-    char private_fifo[250];
-    //to send to server
+    char private_fifo[PATH_MAX] = {};
 
     namePrivateFifo(msg, private_fifo);
     creatPrivateFifo(private_fifo);
@@ -121,9 +119,8 @@ void *generateRequest(void *p) {
         if (readFromPrivateFifo(msg, private_fifo) != 0) {
             logEvent(GAVUP, msg); //client could no longer wait for server's response
         } else {
-            if (msg->tskres == -1) {
-                logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
-            } else logEvent(GOTRS, msg); //client's request successfully attended by the server
+            if (msg->tskres == -1) logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
+            else logEvent(GOTRS, msg); //client's request successfully attended by the server
         }
     }
     free(p);
@@ -132,37 +129,40 @@ void *generateRequest(void *p) {
     return NULL;
 }
 
+int assembleMessage(int request_number, Message *msg) {
+    if (msg == NULL) return -1;
+    *msg = (Message) {
+            .rid = request_number,
+            .pid = getpid(),
+            .tskload = generateNumber(1, 9),
+            .tskres = -1,
+    };
+    return 0;
+}
+
 void generateThreads() {
     int request_number = 0;
     pthread_t tid;
-    pthread_t *existing_threads = malloc(1000000 * sizeof(*existing_threads));
+    pthread_t *existing_threads = malloc(NUMBER_OF_THREADS * sizeof(*existing_threads));
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
 
-    while (remainingTime() > 0 && fifoExists(fifoName)) {
+    while (request_number < NUMBER_OF_THREADS && remainingTime() > 0 && fifoExists(fifoName)) {
         Message *msg = malloc(sizeof(*msg));
-        if (msg == NULL) continue;
-        *msg = (Message) {
-                .rid = request_number,
-                .pid = getpid(),
-                .tskload = generateNumber(1, 9),
-                .tskres = -1,
-        };
+        if (msg == NULL || assembleMessage(request_number, msg)) continue;
         pthread_create(&tid, NULL, generateRequest, msg);
         existing_threads[request_number] = tid;
         ++request_number;
         usleep(generateNumber(1000, 5000));
     }
 
-    for (int i = 0; i < request_number; ++i) {
-        pthread_join(existing_threads[i], NULL);
-    }
+    for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
     free(existing_threads);
 }
 
 int main(int argc, char *argv[]) {
     start_time = time(NULL);
-
+    printf("Initial time: %ld", start_time);
     srand(start_time);
 
     if (parseCommand(argc, argv, &fifoName, &nsecs)) {
