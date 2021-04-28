@@ -82,12 +82,14 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
     int f = open(fifo_path, O_RDONLY);
     fd.fd = f;
     fd.events = POLL_IN;
-    int r = poll(&fd, 1, kmsec);
+    int r = poll(&fd, 1, (int) kmsec);
     if (r < 0) {
         perror("client: error opening private fifo");
         close(f);
         return -1;
     }
+
+    if (r == 0) return 1;
 
     if ((fd.revents & POLLIN) && read(f, msg, sizeof(Message)) < 0) {
         perror("client: error reading from private fifo");
@@ -95,7 +97,6 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
         return -1;
     }
 
-    //COMBACK: Somehow, this causes the server to break down.
     if (close(f) < 0) {
         perror("client: error closing private fifo");
         return -1;
@@ -162,8 +163,7 @@ void generateThreads() {
 int main(int argc, char *argv[]) {
     start_time = time(NULL);
 
-    //srand(start_time);
-    srand(0);
+    srand(start_time);
 
     if (parseCommand(argc, argv, &fifoName, &nsecs)) {
         fprintf(stderr, "client: parsing error\n");
@@ -175,13 +175,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (!fifoExists(fifoName)) return -1;
-
     // This call shall block until the FIFO is opened for writing by the server.
     while (remainingTime() > 0 && (public = open(fifoName, O_WRONLY | O_NONBLOCK)) < 0);
 
     if (public < 0) {
-        fprintf(stderr,"client: opening private fifo: took too long\n");
+        fprintf(stderr, "client: opening private fifo: took too long\n");
         return -1;
     }
 
