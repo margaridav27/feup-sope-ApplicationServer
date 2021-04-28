@@ -21,7 +21,6 @@ int nsecs;
 time_t start_time;
 char *fifoName;
 pthread_mutex_t write_mutex;
-pthread_mutex_t request_number_mutex;
 
 int remainingTime() { return nsecs - (time(0) - start_time); }
 
@@ -79,21 +78,24 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
     struct pollfd fd;
     const int kmsec = remainingTime() * 1000;
 
-    fd.fd = open(fifo_path, O_RDONLY);
-    fd.events = POLL_IN | POLLHUP;
+    int f = open(fifo_path, O_RDONLY);
+    fd.fd = f;
+    fd.events = POLL_IN;
     int r = poll(&fd, 1, kmsec);
     if (r < 0) {
         perror("client: error opening private fifo");
+        close(f);
         return -1;
     }
 
-    if ((fd.revents & POLLIN) && read(fd.fd, msg, sizeof(Message)) < 0) {
+    if ((fd.revents & POLLIN) && read(f, msg, sizeof(Message)) < 0) {
         perror("client: error reading from private fifo");
+        close(f);
         return -1;
     }
 
     //COMBACK: Somehow, this causes the server to break down.
-    if (close(fd.fd) < 0) {
+    if (close(f) < 0) {
         perror("client: error closing private fifo");
         return -1;
     }
@@ -101,54 +103,59 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
     return 0; //got out of the cycle due to msg being successfully received
 }
 
-void *generateRequest(void *arg) {
+void *generateRequest(void *p) {
+    if (p == NULL) return NULL;
+    Message *msg = p;
+    msg->tid = pthread_self();
+
     char private_fifo[250];
-
     //to send to server
-    Message msg = (Message) {
-            .rid = *(int *) arg,
-            .pid = getpid(),
-            .tid = pthread_self(),
-            .tskload = generateNumber(1, 9),
-            .tskres = -1,
-    };
 
-    pthread_mutex_unlock(&request_number_mutex);
-
-    namePrivateFifo(&msg, private_fifo);
+    namePrivateFifo(msg, private_fifo);
     creatPrivateFifo(private_fifo);
 
-    if (writeToPublicFifo(&msg) == 0) {
-        logEvent(IWANT, &msg); //successfully sent the request
-        if (readFromPrivateFifo(&msg, private_fifo) != 0) {
-            logEvent(GAVUP, &msg); //client could no longer wait for server's response
+    if (writeToPublicFifo(msg) == 0) {
+        logEvent(IWANT, msg); //successfully sent the request
+        if (readFromPrivateFifo(msg, private_fifo) != 0) {
+            logEvent(GAVUP, msg); //client could no longer wait for server's response
         } else {
-            if (msg.tskres == -1) {
-                logEvent(CLOSD, &msg); //client's request was not attended due to server's timeout
-            } else logEvent(GOTRS, &msg); //client's request successfully attended by the server
+            if (msg->tskres == -1) {
+                logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
+            } else logEvent(GOTRS, msg); //client's request successfully attended by the server
         }
     }
+    free(p);
 
     removePrivateFifo(private_fifo);
     return NULL;
 }
 
 void generateThreads() {
-    int request_number = -1;
+    int request_number = 0;
     pthread_t tid;
-    pthread_t existing_threads[1000000];
+    pthread_t *existing_threads = malloc(1000000 * sizeof(*existing_threads));
+    if (existing_threads == NULL) return;
+    memset(existing_threads, 0, sizeof(*existing_threads));
 
     while (remainingTime() > 0 && fifoExists(fifoName)) {
-        pthread_mutex_lock(&request_number_mutex);
-        ++request_number;
-        pthread_create(&tid, NULL, generateRequest, &request_number);
+        Message *msg = malloc(sizeof(*msg));
+        if (msg == NULL) continue;
+        *msg = (Message) {
+                .rid = request_number,
+                .pid = getpid(),
+                .tskload = generateNumber(1, 9),
+                .tskres = -1,
+        };
+        pthread_create(&tid, NULL, generateRequest, msg);
         existing_threads[request_number] = tid;
+        ++request_number;
         usleep(generateNumber(1000, 5000));
     }
 
-    for (int i = 0; i <= request_number; ++i) {
+    for (int i = 0; i < request_number; ++i) {
         pthread_join(existing_threads[i], NULL);
     }
+    free(existing_threads);
 }
 
 int main(int argc, char *argv[]) {
@@ -162,7 +169,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (pthread_mutex_init(&write_mutex, NULL) || pthread_mutex_init(&request_number_mutex, NULL)) {
+    if (pthread_mutex_init(&write_mutex, NULL)) {
         perror("client: mutex init");
         return 1;
     }
@@ -170,7 +177,7 @@ int main(int argc, char *argv[]) {
     generateThreads();
 
     // Note: the bitwise or is used to ensure both commands run
-    if (pthread_mutex_destroy(&write_mutex) | pthread_mutex_destroy(&request_number_mutex)) {
+    if (pthread_mutex_destroy(&write_mutex)) {
         perror("client: mutex destroy");
         return 1;
     }

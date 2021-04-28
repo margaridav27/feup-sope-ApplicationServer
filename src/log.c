@@ -8,7 +8,6 @@
 int logEvent(event_t event, const Message *msg) {
     static const char *kevent_names[] = {"IWANT", "GOTRS", "CLOSD", "GAVUP"};
     time_t elapsed = time(NULL);
-
     return printf("%ld ; %d ; %d ; %d ; %ld; %d ; %s\n",
                   elapsed,
                   msg->rid,
@@ -18,5 +17,4 @@ int logEvent(event_t event, const Message *msg) {
                   msg->tskres,
                   kevent_names[event]
     );
-
 }
