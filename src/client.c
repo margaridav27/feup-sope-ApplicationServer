@@ -104,7 +104,7 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
         return -1;
     }
 
-    return 0; //got out of the cycle due to msg being successfully received
+    return 0; 
 }
 
 void *generateRequest(void *p) {
