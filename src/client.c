@@ -82,7 +82,8 @@ int removePrivateFifo(char fifo_path[]) {
 
 int readFromPrivateFifo(Message *msg, const char *fifo_path) {
     int f = 0;
-    while (remainingTime() > 0 && (f = open(fifo_path, O_RDONLY | O_NONBLOCK)) < 0);
+    while (remainingTime() > 0 &&
+         (f = open(fifo_path, O_RDONLY | O_NONBLOCK)) < 0) continue;
     if (f < 0) return 1;
 
     const int kmsec = (int) remainingTime() * 1000;
@@ -113,7 +114,7 @@ int readFromPrivateFifo(Message *msg, const char *fifo_path) {
         return -1;
     }
 
-    return 0; 
+    return 0;
 }
 
 void *generateRequest(void *p) {
@@ -127,12 +128,17 @@ void *generateRequest(void *p) {
     creatPrivateFifo(private_fifo);
 
     if (writeToPublicFifo(msg) == 0) {
-        logEvent(IWANT, msg); //successfully sent the request
+        // successfully sent the request
+        logEvent(IWANT, msg);
         if (readFromPrivateFifo(msg, private_fifo) != 0) {
-            logEvent(GAVUP, msg); //client could no longer wait for server's response
+            // client could no longer wait for server's response
+            logEvent(GAVUP, msg);
         } else {
-            if (msg->tskres == -1) logEvent(CLOSD, msg); //client's request was not attended due to server's timeout
-            else logEvent(GOTRS, msg); //client's request successfully attended by the server
+            // client's request was not attended due to server's timeout
+            if (msg->tskres == -1) logEvent(CLOSD, msg);
+            // client's request successfully attended by the server
+            else
+            logEvent(GOTRS, msg);
         }
     }
     free(p);
@@ -159,7 +165,8 @@ void generateThreads() {
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
 
-    while (request_number < NUMBER_OF_THREADS && remainingTime() > 0 && fifoExists(fifoName)) {
+    while (request_number < NUMBER_OF_THREADS &&
+            remainingTime() > 0 && fifoExists(fifoName)) {
         Message *msg = malloc(sizeof(*msg));
         if (msg == NULL || assembleMessage(request_number, msg)) continue;
         pthread_create(&tid, NULL, generateRequest, msg);
@@ -168,7 +175,8 @@ void generateThreads() {
         usleep(generateNumber(1000, 5000));
     }
 
-    for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
+    for (int i = 0; i < request_number; ++i)
+        pthread_join(existing_threads[i], NULL);
     free(existing_threads);
 }
 
@@ -189,7 +197,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    while (remainingTime() > 0 && (public = open(fifoName, O_WRONLY | O_NONBLOCK)) < 0);
+    while (remainingTime() > 0 &&
+        (public = open(fifoName, O_WRONLY | O_NONBLOCK)) < 0) continue;
 
     if (public < 0) {
         fprintf(stderr, "client: opening private fifo: took too long\n");

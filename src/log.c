@@ -1,9 +1,10 @@
 #include "./include/log.h"
-#include "stdio.h"
+
 #include <time.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdio.h>
 
 int logEvent(event_t event, const Message *msg) {
     static const char *kevent_names[] = {"IWANT", "GOTRS", "CLOSD", "GAVUP"};
@@ -15,7 +16,6 @@ int logEvent(event_t event, const Message *msg) {
            msg->pid,
            msg->tid,
            msg->tskres,
-           kevent_names[event]
-    );
+           kevent_names[event]);
     return fflush(stdout);
 }
