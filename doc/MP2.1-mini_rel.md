@@ -1,18 +1,18 @@
-# Relatório Mini Projeto 2 - 1ª entrega
+# **Relatório Mini Projeto 2 - 1ª entrega**
 
-## Módulos principais
+## **Módulos principais**
 
-### Parse
+### **Parse**
 
 Implementa a função **_parseCommand_** que desempenha todo o processo de _parsing_ dos argumentos fornecidos através da linha de comandos, bem como a sua validação.
 
-### Log
+### **Log**
 
 Contém a função **_logEvent_**, encarregue de escrever no terminal qualquer atualização que surja ao longo do programa, relativa à comunicação entre as _threads_ do cliente e o servidor. 
 
 Além do evento em si - associado às _keywords_ **_IWANT_**, **_GOTRS_**, **_CLOSD_** e **_GAVUP_** -, é também apresentada toda a informação relativa à _thread_ onde a ação se verificou.
 
-### Client
+### **Client**
 
 Inclui todas as funções que abordam o fluxo principal do programa, _i.e._ a criação das _threads_ responsáveis por cada pedido e a escrita/leitura para _named pipes_.
 
