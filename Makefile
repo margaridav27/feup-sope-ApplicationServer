@@ -2,7 +2,7 @@
 CLIENT_EXECUTABLE := c
 SERVER_EXECUTABLE := s
 
-DELAY:=0
+DELAY:=10000
 
 # Output build files
 BUILD_DIRECTORY := ./build
