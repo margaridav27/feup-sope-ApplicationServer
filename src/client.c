@@ -39,17 +39,23 @@ int writeToPublicFifo(const Message *msg) {
     pthread_mutex_lock(&write_mutex);
 
     struct pollfd fd;
-    const size_t kmsec = remainingTime() * 1000;
-
+    const int kmsec = (int) remainingTime() * 1000;
     fd.fd = public;
     fd.events = POLLOUT;
-    int r = poll(&fd, 1, (int) kmsec);
+    int r = poll(&fd, 1, kmsec);
     if (r < 0) {
+        pthread_mutex_unlock(&write_mutex);
         perror("client: error opening private fifo");
         return -1;
     }
 
+    if (r == 0) {
+        pthread_mutex_unlock(&write_mutex);
+        return -1;
+    }
+
     if ((fd.revents & POLLOUT) && write(public, msg, sizeof(*msg)) < 0) {
+        pthread_mutex_unlock(&write_mutex);
         perror("client: error writing to public fifo");
         return -1;
     }
@@ -71,17 +77,20 @@ int creatPrivateFifo(const char *fifo_path) {
 
 int removePrivateFifo(char fifo_path[]) {
     if (fifo_path == NULL) return -1;
-    return unlink(fifo_path);
+    return remove(fifo_path);
 }
 
 int readFromPrivateFifo(Message *msg, const char *fifo_path) {
-    struct pollfd fd;
-    const size_t kmsec = remainingTime() * 1000;
+    int f = 0;
+    while (remainingTime() > 0 && (f = open(fifo_path, O_RDONLY | O_NONBLOCK)) < 0);
+    if (f < 0) return 1;
 
-    int f = open(fifo_path, O_RDONLY);
+    const int kmsec = (int) remainingTime() * 1000;
+    struct pollfd fd;
     fd.fd = f;
     fd.events = POLL_IN;
-    int r = poll(&fd, 1, (int) kmsec);
+
+    int r = poll(&fd, 1, kmsec);
     if (r < 0) {
         perror("client: error opening private fifo");
         close(f);
@@ -112,7 +121,7 @@ void *generateRequest(void *p) {
     Message *msg = p;
     msg->tid = pthread_self();
 
-    char private_fifo[PATH_MAX] = {};
+    char private_fifo[PATH_MAX] = {0};
 
     namePrivateFifo(msg, private_fifo);
     creatPrivateFifo(private_fifo);
@@ -165,8 +174,10 @@ void generateThreads() {
 
 int main(int argc, char *argv[]) {
     start_time = time(NULL);
-    printf("Initial time: %ld", start_time);
     srand(start_time);
+
+    printf("Initial time: %ld", start_time);
+    fflush(stdout);
 
     if (parseCommand(argc, argv, &fifoName, &nsecs)) {
         fprintf(stderr, "client: parsing error\n");
@@ -178,7 +189,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // This call shall block until the FIFO is opened for writing by the server.
     while (remainingTime() > 0 && (public = open(fifoName, O_WRONLY | O_NONBLOCK)) < 0);
 
     if (public < 0) {
