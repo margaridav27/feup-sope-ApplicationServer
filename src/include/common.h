@@ -1,5 +1,5 @@
-#ifndef _COMMON_H
-#define _COMMON_H 1
+#ifndef SRC_INCLUDE_COMMON_H_
+#define SRC_INCLUDE_COMMON_H_ 1
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -13,4 +13,4 @@ typedef struct {
 	int tskres;										// task result
 } Message;
 
-#endif // _COMMON_H
+#endif // SRC_INCLUDE_COMMON_H_
