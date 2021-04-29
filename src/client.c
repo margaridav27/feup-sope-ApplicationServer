@@ -39,12 +39,12 @@ int writeToPublicFifo(const Message *msg) {
     pthread_mutex_lock(&write_mutex);
 
     struct pollfd fd;
-    const size_t kmsec = remainingTime() * 1000;
-
+    const int kmsec = (int) remainingTime() * 1000;
     fd.fd = public;
     fd.events = POLLOUT;
-    int r = poll(&fd, 1, (int) kmsec);
+    int r = poll(&fd, 1, kmsec);
     if (r < 0) {
+        pthread_mutex_unlock(&write_mutex);
         perror("client: error opening private fifo");
         return -1;
     }
@@ -55,6 +55,7 @@ int writeToPublicFifo(const Message *msg) {
     }
 
     if ((fd.revents & POLLOUT) && write(public, msg, sizeof(*msg)) < 0) {
+        pthread_mutex_unlock(&write_mutex);
         perror("client: error writing to public fifo");
         return -1;
     }
@@ -81,7 +82,7 @@ int removePrivateFifo(char fifo_path[]) {
 
 int readFromPrivateFifo(Message *msg, const char *fifo_path) {
     int f = 0;
-    while (remainingTime() > 0 && (f = open(fifo_path, O_WRONLY | O_NONBLOCK)) < 0);
+    while (remainingTime() > 0 && (f = open(fifo_path, O_RDONLY | O_NONBLOCK)) < 0);
     if (f < 0) return 1;
 
     const int kmsec = (int) remainingTime() * 1000;
