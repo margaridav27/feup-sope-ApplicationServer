@@ -1,6 +1,8 @@
-#ifndef PROJECT_INCLUDE_PARSE_H_
-#define PROJECT_INCLUDE_PARSE_H_
+#ifndef SRC_INCLUDE_PARSE_H_
+#define SRC_INCLUDE_PARSE_H_
 
-int parseCommand(int argc, char *argv[], char* fifoname[], int *nsecs);
+#include <sys/types.h>
 
-#endif
+int parseCommand(int argc, char *argv[], char *fifoname[], size_t *nsecs);
+
+#endif  // SRC_INCLUDE_PARSE_H_
