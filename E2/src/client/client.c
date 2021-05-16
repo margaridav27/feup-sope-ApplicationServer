@@ -13,7 +13,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <dirent.h>
-#include "common.h"
+#include "include/common.h"
 
 #define CONFORTSIZE	1024
 #define PERM 0666	// permissões de acesso ao FIFO
