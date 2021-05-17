@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <limits.h>
 #include <sys/types.h>
+#include <semaphore.h>
 #include <assert.h>
 #include <poll.h>
 
@@ -24,9 +25,11 @@ size_t nsecs;
 time_t start_time;
 char *fifo_name;
 int public;
-Message * storage;
-int storage_usage;
-pthread_mutex_t storage_mutex;
+
+sem_t empty; // how many slots are free
+sem_t full; // how many slots have content
+pthread_mutex_t read_mutex; // make buffer addition/removal atomic
+
 
 size_t remainingTime() { return nsecs - (time(0) - start_time); }
 
@@ -35,36 +38,56 @@ int fifoExists(const char *fifo_path) {
     return access(fifo_path, F_OK) == 0;
 }
 
-/*int writeToPrivateFifo(const Message *msg) {
+int namePrivateFifo(const Message *msg, char *fifo_path) {
+    if (msg == NULL || fifo_path == NULL) return -1;
+    return snprintf(fifo_path, 250, "/tmp/%u.%lu", msg->pid, msg->tid) > 0;
+}
+
+int writeToPrivateFifo(const Message *msg) {
+    int private;
+    char private_fifo[PATH_MAX] = {0};
+
+    namePrivateFifo(msg, private_fifo);
+
+    if (fifoExists(private_fifo) != 0){
+        perror("server: fifo does not exist");
+        return -1;
+    }
+
+    while (remainingTime() > 0 &&
+        (private = open(private_fifo, O_WRONLY | O_NONBLOCK)) < 0) continue;
+
     if (msg == NULL) return -1;
-    pthread_mutex_lock(&write_mutex);
+    //pthread_mutex_lock(&write_mutex);
 
     struct pollfd fd;
     const int kmsec = (int) remainingTime() * 1000;
-    fd.fd = public;
+    fd.fd = private;
     fd.events = POLLOUT;
     int r = poll(&fd, 1, kmsec);
     if (r < 0) {
-        pthread_mutex_unlock(&write_mutex);
+        //pthread_mutex_unlock(&write_mutex);
         perror("client: error opening private fifo");
         return -1;
     }
 
     if (r == 0) {
-        pthread_mutex_unlock(&write_mutex);
+        //pthread_mutex_unlock(&write_mutex);
         return -1;
     }
 
-    if ((fd.revents & POLLOUT) && write(public, msg, sizeof(*msg)) < 0) {
-        pthread_mutex_unlock(&write_mutex);
+    if ((fd.revents & POLLOUT) && write(private, msg, sizeof(*msg)) < 0) {
+        //pthread_mutex_unlock(&write_mutex);
         perror("client: error writing to public fifo");
         return -1;
     }
 
-    pthread_mutex_unlock(&write_mutex);
+    logEvent(TSKDN,msg);
+
+    //pthread_mutex_unlock(&write_mutex);
 
     return 0;
-}*/
+}
 
 int creatPublicFifo() {
     if (fifo_name == NULL) return -1;
@@ -76,13 +99,10 @@ int creatPublicFifo() {
     return remove(fifo_path);
 }*/
 
-int namePrivateFifo(const Message *msg, char *fifo_path) {
-    if (msg == NULL || fifo_path == NULL) return -1;
-    return snprintf(fifo_path, 250, "/tmp/%u.%lu", msg->pid, msg->tid) > 0;
-}
-
 
 int readFromPublicFifo(Message *msg) {
+    pthread_mutex_lock(&read_mutex);
+
     const int kmsec = (int) remainingTime() * 1000;
     struct pollfd fd;
     fd.fd = public;
@@ -90,27 +110,42 @@ int readFromPublicFifo(Message *msg) {
 
     int r = poll(&fd, 1, kmsec);
     if (r < 0) {
+        pthread_mutex_unlock(&read_mutex);
         perror("client: error opening private fifo");
         //close(public);
         return -1;
     }
 
     if (r == 0) {
+        pthread_mutex_unlock(&read_mutex);
         //close(public);
         return 1;
     }
 
     if ((fd.revents & POLLIN) && read(public, msg, sizeof(Message)) < 0) {
+        pthread_mutex_unlock(&read_mutex);
         perror("client: error reading from private fifo");
         //close(public);
         return -1;
     }
 
+    pthread_mutex_unlock(&read_mutex);
     return 0;
 }
 
-int writeMessageToStorage(){
+int writeMessageToStorage(){ 
+    sem_wait(&empty); // decrease the number of empty slots
 
+
+    sem_post(&full); // increase the number of slots with content
+    return 0;
+}
+
+int readMessageFromStorage(){
+    sem_wait(&empty); // decrease the number of empty slots
+
+
+    sem_post(&full); // increase the number of slots with content
     return 0;
 }
 
@@ -119,15 +154,11 @@ void *handleRequest(void *p) {
     if (p == NULL) return NULL;
     Message *msg = p;
 
-    //char private_fifo[PATH_MAX] = {0};
-
-    //namePrivateFifo(msg, private_fifo);
-
     //msg->tid = pthread_self();
 
     msg->tskres = task(msg->tskload);
 
-    //write to armazem
+    logEvent(TSKEX,msg);
 
     writeMessageToStorage();
 
@@ -176,10 +207,17 @@ void generateThreads() {
 
         if (msg == NULL) continue;
         if( readFromPublicFifo(msg) == 0 ){
+            logEvent(RECVD,msg);
             pthread_create(&tid, NULL, handleRequest, msg);
             existing_threads[request_number] = tid;
             ++request_number;
         }
+
+        //readMessageFromStorage();
+        //read from storage
+        //receive msg
+        writeToPrivateFifo(msg);
+        
     }
 
     for (int i = 0; i < request_number; ++i)
@@ -188,10 +226,7 @@ void generateThreads() {
 }
 
 int creatStorage(){
-    storage_usage = 0;
-    storage = malloc(bufsz * sizeof(Message));
-    if (storage == NULL) return -1;
-    memset(storage, 0, sizeof(*storage));
+    //TODO USE QUEUE
     return 0;
 }
 
@@ -206,11 +241,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    
-    if (pthread_mutex_init(&storage_mutex, NULL)) {
+    if (pthread_mutex_init(&read_mutex, NULL)) {
         perror("client: mutex init");
         return 1;
     }
+
+    if(bufsz == 0){
+       bufsz = BUFSZ_SIZE;
+    }
+
+    sem_init(&empty, 0, bufsz);
+
+	sem_init(&full, 0, 0);
 
     if(creatPublicFifo() != 0){
         perror("server: error creating public fifo");
@@ -225,10 +267,7 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    if(bufsz == 0){
-       bufsz = BUFSZ_SIZE;
-    }
-
+    
     if(creatStorage() != 0){
         perror("server: error creating storage");
         return -1;
@@ -241,7 +280,11 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    if (pthread_mutex_destroy(&storage_mutex)) {
+    sem_destroy(&empty);
+
+    sem_destroy(&full);
+
+    if (pthread_mutex_destroy(&read_mutex)) {
         perror("client: mutex destroy");
         return 1;
     }
