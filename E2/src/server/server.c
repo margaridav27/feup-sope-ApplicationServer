@@ -43,14 +43,16 @@ int namePrivateFifo(const Message *msg, char *fifo_path) {
     return snprintf(fifo_path, 250, "/tmp/%u.%lu", msg->pid, msg->tid) > 0;
 }
 
-int writeToPrivateFifo(const Message *msg) {
+int writeToPrivateFifo(Message *msg) {
     int private;
     char private_fifo[PATH_MAX] = {0};
 
     namePrivateFifo(msg, private_fifo);
 
     if (fifoExists(private_fifo) != 0){
-        perror("server: fifo does not exist");
+        perror("server: private fifo does not exist");
+        msg->tskres = -1;
+        logEvent(FAILD,msg);
         return -1;
     }
 
@@ -68,6 +70,8 @@ int writeToPrivateFifo(const Message *msg) {
     if (r < 0) {
         //pthread_mutex_unlock(&write_mutex);
         perror("client: error opening private fifo");
+        msg->tskres = -1;
+        logEvent(FAILD,msg);
         return -1;
     }
 
@@ -79,12 +83,15 @@ int writeToPrivateFifo(const Message *msg) {
     if ((fd.revents & POLLOUT) && write(private, msg, sizeof(*msg)) < 0) {
         //pthread_mutex_unlock(&write_mutex);
         perror("client: error writing to public fifo");
+        msg->tskres = -1;
+        logEvent(FAILD,msg);
         return -1;
     }
 
     logEvent(TSKDN,msg);
 
     //pthread_mutex_unlock(&write_mutex);
+    close(private);
 
     return 0;
 }
@@ -197,14 +204,14 @@ void generateThreads() {
     int request_number = 0;
     pthread_t tid;
     pthread_t *existing_threads = malloc(NUMBER_OF_THREADS * sizeof(*existing_threads));
+    Message *msg = malloc(sizeof(*msg));
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
 
     while (request_number < NUMBER_OF_THREADS &&
             remainingTime() > 0 ) {
 
-        Message *msg = malloc(sizeof(*msg));
-
+        
         if (msg == NULL) continue;
         if( readFromPublicFifo(msg) == 0 ){
             logEvent(RECVD,msg);
@@ -219,6 +226,14 @@ void generateThreads() {
         writeToPrivateFifo(msg);
         
     }
+
+    //process 2LATE requests
+    while(readFromPublicFifo(msg) == 0){
+        msg->tskres = -1;
+        writeToPrivateFifo(msg);
+        logEvent(_2LATE,msg);
+    }
+    
 
     for (int i = 0; i < request_number; ++i)
         pthread_join(existing_threads[i], NULL);
