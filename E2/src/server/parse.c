@@ -45,6 +45,7 @@ int parseCommand(int argc, char *argv[], char* fifoname[], size_t *nsecs, size_t
     }
     else{
         *fifoname = argv[3];
+        *bufsz = 0;
     }
 
     return 0;
