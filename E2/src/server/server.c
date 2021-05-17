@@ -230,7 +230,9 @@ void generateThreads() {
     //process 2LATE requests
     while(readFromPublicFifo(msg) == 0){
         msg->tskres = -1;
-        writeToPrivateFifo(msg);
+        if(writeToPrivateFifo(msg) != 0){
+            return;
+        }
         logEvent(_2LATE,msg);
     }
     
