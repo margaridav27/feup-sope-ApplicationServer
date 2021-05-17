@@ -30,7 +30,7 @@ SERVER_OBJECT_FILES := $(SERVER_SOURCE_FILES:%=$(SERVER_BUILD_DIRECTORY)/%.o)
 DEPENDENCIES := $(CLIENT_OBJECT_FILES:.o=.d) $(SERVER_OBJECT_FILES:.o=.d)
 
 # Include directories
-INCLUDE_FLAGS := $(addprefix -I, $(INCLUDE_DIRECTORIES)) -pthread
+INCLUDE_FLAGS := $(addprefix -I, $(INCLUDE_DIRECTORIES)) -pthread -lrt
 
 # Preprocessor flags
 CPPFLAGS := $(INCLUDE_FLAGS) -MMD -MP -DDELAY=$(DELAY)
