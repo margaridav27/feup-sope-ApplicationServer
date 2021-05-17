@@ -18,7 +18,7 @@
 #include "./lib/lib.h"
 
 #define NUMBER_OF_THREADS 100000000
-#define BUFSZ_SIZE 5120
+#define BUF_SIZE 5120
 
 size_t bufsz;
 size_t nsecs;
@@ -52,45 +52,38 @@ int writeToPrivateFifo(Message *msg) {
     if (fifoExists(private_fifo) != 0){
         perror("server: private fifo does not exist");
         msg->tskres = -1;
-        logEvent(FAILD,msg);
+        logEvent(FAILD, msg);
         return -1;
     }
 
-    while (remainingTime() > 0 &&
-        (private = open(private_fifo, O_WRONLY | O_NONBLOCK)) < 0) continue;
+    while (remainingTime() > 0 && (private = open(private_fifo, O_WRONLY | O_NONBLOCK)) < 0) continue;
 
     if (msg == NULL) return -1;
-    //pthread_mutex_lock(&write_mutex);
 
     struct pollfd fd;
     const int kmsec = (int) remainingTime() * 1000;
     fd.fd = private;
     fd.events = POLLOUT;
     int r = poll(&fd, 1, kmsec);
+
     if (r < 0) {
-        //pthread_mutex_unlock(&write_mutex);
-        perror("client: error opening private fifo");
+        perror("server: error opening private fifo");
         msg->tskres = -1;
-        logEvent(FAILD,msg);
+        logEvent(FAILD, msg);
         return -1;
     }
 
-    if (r == 0) {
-        //pthread_mutex_unlock(&write_mutex);
-        return -1;
-    }
-
+    if (r == 0) return -1;
+    
     if ((fd.revents & POLLOUT) && write(private, msg, sizeof(*msg)) < 0) {
-        //pthread_mutex_unlock(&write_mutex);
-        perror("client: error writing to public fifo");
+        perror("server: error writing to public fifo");
         msg->tskres = -1;
-        logEvent(FAILD,msg);
+        logEvent(FAILD, msg);
         return -1;
     }
 
     logEvent(TSKDN,msg);
 
-    //pthread_mutex_unlock(&write_mutex);
     close(private);
 
     return 0;
@@ -106,7 +99,6 @@ int creatPublicFifo() {
     return remove(fifo_path);
 }*/
 
-
 int readFromPublicFifo(Message *msg) {
     pthread_mutex_lock(&read_mutex);
 
@@ -114,29 +106,27 @@ int readFromPublicFifo(Message *msg) {
     struct pollfd fd;
     fd.fd = public;
     fd.events = POLL_IN;
-
     int r = poll(&fd, 1, kmsec);
+
     if (r < 0) {
         pthread_mutex_unlock(&read_mutex);
-        perror("client: error opening private fifo");
-        //close(public);
+        perror("server: error opening public fifo");
         return -1;
     }
 
     if (r == 0) {
         pthread_mutex_unlock(&read_mutex);
-        //close(public);
         return 1;
     }
 
     if ((fd.revents & POLLIN) && read(public, msg, sizeof(Message)) < 0) {
         pthread_mutex_unlock(&read_mutex);
-        perror("client: error reading from private fifo");
-        //close(public);
+        perror("server: error reading from public fifo");
         return -1;
     }
 
     pthread_mutex_unlock(&read_mutex);
+
     return 0;
 }
 
@@ -145,6 +135,7 @@ int writeMessageToStorage(){
 
 
     sem_post(&full); // increase the number of slots with content
+
     return 0;
 }
 
@@ -153,9 +144,9 @@ int readMessageFromStorage(){
 
 
     sem_post(&full); // increase the number of slots with content
+
     return 0;
 }
-
 
 void *handleRequest(void *p) {
     if (p == NULL) return NULL;
@@ -208,13 +199,11 @@ void generateThreads() {
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
 
-    while (request_number < NUMBER_OF_THREADS &&
-            remainingTime() > 0 ) {
-
-        
+    while (request_number < NUMBER_OF_THREADS && remainingTime() > 0 ) {
         if (msg == NULL) continue;
-        if( readFromPublicFifo(msg) == 0 ){
-            logEvent(RECVD,msg);
+
+        if(readFromPublicFifo(msg) == 0){
+            logEvent(RECVD, msg);
             pthread_create(&tid, NULL, handleRequest, msg);
             existing_threads[request_number] = tid;
             ++request_number;
@@ -224,21 +213,17 @@ void generateThreads() {
         //read from storage
         //receive msg
         writeToPrivateFifo(msg);
-        
     }
 
-    //process 2LATE requests
+    // handling pendent requests after server's timeout
     while(readFromPublicFifo(msg) == 0){
         msg->tskres = -1;
-        if(writeToPrivateFifo(msg) != 0){
-            return;
-        }
-        logEvent(_2LATE,msg);
+        if(writeToPrivateFifo(msg) != 0) return;
+        logEvent(_2LATE, msg);
     }
     
+    for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
 
-    for (int i = 0; i < request_number; ++i)
-        pthread_join(existing_threads[i], NULL);
     free(existing_threads);
 }
 
@@ -254,38 +239,34 @@ int main(int argc, char *argv[]) {
     fflush(stdout);
 
     if (parseCommand(argc, argv, &fifo_name, &nsecs, &bufsz)) {
-        fprintf(stderr, "client: parsing error\n");
+        perror("server: parsing error");
         return 1;
     }
 
     if (pthread_mutex_init(&read_mutex, NULL)) {
-        perror("client: mutex init");
+        perror("server: mutex init");
         return 1;
     }
 
-    if(bufsz == 0){
-       bufsz = BUFSZ_SIZE;
-    }
-
+    if(bufsz == 0) bufsz = BUF_SIZE;
+    
     sem_init(&empty, 0, bufsz);
-
 	sem_init(&full, 0, 0);
 
-    if(creatPublicFifo() != 0){
+    if(creatPublicFifo() != 0) {
         perror("server: error creating public fifo");
         return 1;
     }
 
-    while (remainingTime() > 0 &&
-        (public = open(fifo_name, O_RDONLY | O_NONBLOCK)) < 0) continue;
+    while (remainingTime() > 0 && (public = open(fifo_name, O_RDONLY | O_NONBLOCK)) < 0) continue;
 
     if (public < 0) {
-        fprintf(stderr, "client: opening private fifo: took too long\n");
+        perror("server: opening private fifo: took too long");
         return -1;
     }
 
     
-    if(creatStorage() != 0){
+    if(creatStorage() != 0) {
         perror("server: error creating storage");
         return -1;
     }
@@ -293,12 +274,11 @@ int main(int argc, char *argv[]) {
     generateThreads();
 
     if (close(public) < 0) {
-        perror("client: error closing private fifo");
+        perror("server: error closing private fifo");
         return -1;
     }
 
     sem_destroy(&empty);
-
     sem_destroy(&full);
 
     if (pthread_mutex_destroy(&read_mutex)) {
