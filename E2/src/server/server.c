@@ -12,7 +12,7 @@
 #include <semaphore.h>
 #include <assert.h>
 #include <poll.h>
-#include <mqueue.h>
+#include <sys/queue.h>
 
 #include "./include/parse.h"
 #include "./include/log.h"
@@ -20,6 +20,17 @@
 
 #define NUMBER_OF_THREADS 100000000
 #define BUFSZ_SIZE 5120
+
+
+typedef struct node {
+
+    Message *msg; //node message
+    STAILQ_ENTRY(node) nodes; //next queue node
+
+} node_t;
+
+STAILQ_HEAD(stailthead_t, node); //template for head
+struct stailthead_t head; //define queue head
 
 size_t bufsz;
 size_t nsecs;
@@ -31,7 +42,6 @@ sem_t empty; // how many slots are free
 sem_t full; // how many slots have content
 pthread_mutex_t read_mutex; // make buffer addition/removal atomic
 
-mqd_t queue;
 
 size_t remainingTime() { return nsecs - (time(0) - start_time); }
 
@@ -39,11 +49,6 @@ int fifoExists(const char *fifo_path) {
     if (fifo_path == NULL) return -1;
     return access(fifo_path, F_OK) == 0;
 }
-
-int queueExists() {
-    return access("./communication_queue", F_OK) == 0;
-}
-
 
 int namePrivateFifo(const Message *msg, char *fifo_path) {
     if (msg == NULL || fifo_path == NULL) return -1;
@@ -97,6 +102,9 @@ int writeToPrivateFifo(const Message *msg) {
 }
 
 int creatPublicFifo() {
+    //FIXME: testing only
+    remove(fifo_name);
+
     if (fifo_name == NULL) return -1;
     return mkfifo(fifo_name, 0666);
 }
@@ -140,40 +148,66 @@ int readFromPublicFifo(Message *msg) {
     return 0;
 }
 
-int writeMessageToStorage(Message *msg){ 
 
-    if(queueExists() != 0){
-        fprintf(stderr, "Queue no longer exists\n");
-    }
+int createStorage(){
+    STAILQ_INIT(&head);
+    return 0;
+}
+
+
+int writeMessageToStorage(Message *msg){ 
+    node_t *n = malloc(sizeof(*n));
 
     sem_wait(&empty); // decrease the number of empty slots
 
-    mq_send(queue, (char *) msg, sizeof(*msg), 1); //send message to queue
+    msg->tid = pthread_self();
+    n->msg = msg;
+
+    //insert at end of queue
+    STAILQ_INSERT_TAIL(&head, n, nodes);
 
     sem_post(&full); // increase the number of slots with content
 
+    free(n);
+    printf("Written to storage\n");
     return 0;
 }
 
 int readMessageFromStorage(Message *msg){
+    node_t *n = malloc(sizeof(*n));
 
-    if(queueExists() != 0){
-        fprintf(stderr, "Queue no longer exists\n");
+    //if queue is empty return 
+    if(!STAILQ_EMPTY(&head)) 
         return 1;
-    }
 
     sem_wait(&full);// decrease the number of full slots
 
-    if(mq_receive(queue,  (char *)  msg, sizeof(*msg), NULL) == -1){
-        perror("server: error while writing to queue");
-        return 1;
-    }
+    n = STAILQ_FIRST(&head);
+
+    STAILQ_REMOVE_HEAD(&head, nodes);
+
+    msg = n->msg;
 
     sem_post(&empty); // increase the number of slots without content
 
+    free(n);
+    printf("Read to storage\n");
     return 0;
 }
 
+void *consumeTask(void *p){
+    Message *msg = malloc(sizeof(*msg));
+
+    while (remainingTime() > 0){
+        printf("consumer thread creation \n");
+        if(readMessageFromStorage(msg) > 0) continue;
+        writeToPrivateFifo(msg);
+    }
+
+    free(msg);
+
+    return NULL;
+}
 
 void *handleRequest(void *p) {
     if (p == NULL) return NULL;
@@ -187,6 +221,7 @@ void *handleRequest(void *p) {
 
     writeMessageToStorage(msg);
 
+    
     /*
     if (writeToPublicFifo(msg) == 0) {
         // successfully sent the request
@@ -220,6 +255,10 @@ void *handleRequest(void *p) {
 
 void generateThreads() {
     int request_number = 0;
+
+    pthread_t consumer;
+    pthread_create(&consumer, NULL, consumeTask, NULL);
+
     pthread_t tid;
     pthread_t *existing_threads = malloc(NUMBER_OF_THREADS * sizeof(*existing_threads));
     if (existing_threads == NULL) return;
@@ -231,35 +270,30 @@ void generateThreads() {
         Message *msg = malloc(sizeof(*msg));
 
         if (msg == NULL) continue;
-        if( readFromPublicFifo(msg) == 0 ){
+        if(readFromPublicFifo(msg) == 0 ){
             logEvent(RECVD,msg);
             pthread_create(&tid, NULL, handleRequest, msg);
             existing_threads[request_number] = tid;
             ++request_number;
         }
-
-        if(readMessageFromStorage(msg)) continue;
-        //read from storage
-        //receive msg
-        writeToPrivateFifo(msg);
-       
     }
 
     for (int i = 0; i < request_number; ++i)
         pthread_join(existing_threads[i], NULL);
+
+    pthread_join(consumer, NULL);
+
     free(existing_threads);
-}
 
-int createStorage(){
-    struct mq_attr attr;
-    attr.mq_curmsgs = 0;
-    attr.mq_maxmsg = bufsz;
-    attr.mq_msgsize = sizeof(Message);
-    attr.mq_flags = 0;
+    //if the quque is not empty do something with the rest of the messages 
+    /**while(!STAILQ_EMPTY(&head)){
+        //struct node *n = malloc(sizeof(node_t));
+        //Message *msg = malloc(sizeof(Message));
 
-    queue = mq_open("./communication_queue", O_RDWR | O_CREAT, 0666, &attr);
-
-    return queue;//ERROR CHECK
+        STAILQ_REMOVE_HEAD(&head, nodes);
+    }**/
+    
+    
 }
 
 
@@ -316,7 +350,7 @@ int main(int argc, char *argv[]) {
     generateThreads();
 
     if (close(public) < 0) {
-        perror("client: error closing private fifo");
+        perror("server: error closing public fifo");
         return -1;
     }
 
@@ -328,9 +362,6 @@ int main(int argc, char *argv[]) {
         perror("client: mutex destroy");
         return 1;
     }
-
-    mq_close(queue);
-    mq_unlink("./communication_queue");
 
     return 0;
 }

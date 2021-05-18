@@ -61,7 +61,7 @@ $(CLIENT_EXECUTABLE): $(CLIENT_OBJECT_FILES)
 
 $(SERVER_EXECUTABLE): $(SERVER_OBJECT_FILES)
 	@echo "Linking: " $@
-	@$(CC) $(CLIENT_OBJECT_FILES) -o $@ $(LDFLAGS) -g
+	@$(CC) $(SERVER_OBJECT_FILES) -o $@ $(LDFLAGS) -g
 
 .PHONY: clean
 clean:
