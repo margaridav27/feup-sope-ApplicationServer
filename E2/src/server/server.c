@@ -144,7 +144,6 @@ int writeMessageToStorage(Message *msg) {
 
     node_t *n = malloc(sizeof(*n));
     if (n == NULL) return -1;
-
     sem_wait(&empty); // decrease the number of empty slots
 
     n->msg = msg;
@@ -154,7 +153,6 @@ int writeMessageToStorage(Message *msg) {
 
     sem_post(&full); // increase the number of slots with content
 
-    free(n);
     return 0;
 }
 
@@ -258,7 +256,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "server: opening public fifo: took too long\n");
         return -1;
     }
-
+    createStorage();
     generateThreads();
 
     if (close(public) < 0) {
