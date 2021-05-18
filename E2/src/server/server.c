@@ -70,6 +70,7 @@ int writeToPrivateFifo(const Message *msg) {
     const int kmsec = (int) remainingTime() * 1000;
     fd.fd = private;
     fd.events = POLLOUT;
+
     int r = poll(&fd, 1, kmsec);
 
     if (r < 0 || (fd.revents & POLLHUP)) {
@@ -126,6 +127,7 @@ int readFromPublicFifo(Message *msg) {
         perror("server: error reading from public fifo");
         return -1;
     }
+
     pthread_mutex_unlock(&read_mutex);
     return (fd.revents & POLLHUP);
 }
@@ -149,8 +151,10 @@ int writeMessageToStorage(Message *msg) {
 
     //insert at end of queue
     STAILQ_INSERT_TAIL(&head, n, nodes);
+
     sem_post(&full); // increase the number of slots with content
 
+    free(n);
     return 0;
 }
 
