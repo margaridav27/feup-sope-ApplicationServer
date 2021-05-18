@@ -23,10 +23,8 @@
 
 
 typedef struct node {
-
-    Message *msg; //node message
-    STAILQ_ENTRY(node) nodes; //next queue node
-
+    Message *msg;
+    STAILQ_ENTRY(node) nodes;
 } node_t;
 
 STAILQ_HEAD(stailthead_t, node); //template for head
@@ -35,7 +33,6 @@ struct stailthead_t head; //define queue head
 size_t bufsz;
 size_t nsecs;
 time_t start_time;
-char *fifo_name;
 int public;
 
 sem_t empty; // how many slots are free
@@ -55,295 +52,206 @@ int namePrivateFifo(const Message *msg, char *fifo_path) {
     return snprintf(fifo_path, 250, "/tmp/%u.%lu", msg->pid, msg->tid) > 0;
 }
 
+int removePublicFifo(const char *fifo_name) {
+    return remove(fifo_name);
+}
+
+
 int writeToPrivateFifo(const Message *msg) {
-    int private;
-    char private_fifo[PATH_MAX] = {0};
-
-    namePrivateFifo(msg, private_fifo);
-
-    if (fifoExists(private_fifo) != 0){
-        perror("server: fifo does not exist");
-        return -1;
-    }
-
-    while (remainingTime() > 0 &&
-        (private = open(private_fifo, O_WRONLY | O_NONBLOCK)) < 0) continue;
-
     if (msg == NULL) return -1;
-    //pthread_mutex_lock(&write_mutex);
+
+    char private_fifo_name[PATH_MAX] = {0};
+    namePrivateFifo(msg, private_fifo_name);
+
+    int private = 0;
+    while (remainingTime() > 0 && (private = open(private_fifo_name, O_WRONLY | O_NONBLOCK)) < 0) continue;
 
     struct pollfd fd;
     const int kmsec = (int) remainingTime() * 1000;
     fd.fd = private;
     fd.events = POLLOUT;
     int r = poll(&fd, 1, kmsec);
-    if (r < 0) {
-        //pthread_mutex_unlock(&write_mutex);
-        perror("client: error opening private fifo");
+
+    if (r < 0 || (fd.revents & POLLHUP)) {
+        perror("server: error opening private fifo");
+        close(private);
         return -1;
     }
 
     if (r == 0) {
-        //pthread_mutex_unlock(&write_mutex);
+        close(private);
         return -1;
     }
 
     if ((fd.revents & POLLOUT) && write(private, msg, sizeof(*msg)) < 0) {
-        //pthread_mutex_unlock(&write_mutex);
-        perror("client: error writing to public fifo");
+        perror("server: error writing to private fifo");
+        close(private);
         return -1;
     }
 
-    logEvent(TSKDN,msg);
-
-    //pthread_mutex_unlock(&write_mutex);
-
+    logEvent(TSKDN, msg);
+    close(private);
     return 0;
 }
 
-int creatPublicFifo() {
-    //FIXME: testing only
-    remove(fifo_name);
-
+int creatPublicFifo(const char *fifo_name) {
     if (fifo_name == NULL) return -1;
     return mkfifo(fifo_name, 0666);
 }
 
-/*int removePrivateFifo(char fifo_path[]) {
-    if (fifo_path == NULL) return -1;
-    return remove(fifo_path);
-}*/
-
-
 int readFromPublicFifo(Message *msg) {
+    if (msg == NULL) return -1;
+
     pthread_mutex_lock(&read_mutex);
 
     const int kmsec = (int) remainingTime() * 1000;
     struct pollfd fd;
     fd.fd = public;
-    fd.events = POLL_IN;
+    fd.events = POLLIN;
 
     int r = poll(&fd, 1, kmsec);
     if (r < 0) {
         pthread_mutex_unlock(&read_mutex);
-        perror("client: error opening private fifo");
-        //close(public);
+        perror("server: error opening public fifo");
         return -1;
     }
 
     if (r == 0) {
         pthread_mutex_unlock(&read_mutex);
-        //close(public);
-        return 1;
+        return -1;
     }
 
     if ((fd.revents & POLLIN) && read(public, msg, sizeof(Message)) < 0) {
         pthread_mutex_unlock(&read_mutex);
-        perror("client: error reading from private fifo");
-        //close(public);
+        perror("server: error reading from public fifo");
         return -1;
     }
-
     pthread_mutex_unlock(&read_mutex);
-    return 0;
+    return (fd.revents & POLLHUP);
 }
 
 
-int createStorage(){
+int createStorage() {
     STAILQ_INIT(&head);
     return 0;
 }
 
 
-int writeMessageToStorage(Message *msg){ 
+int writeMessageToStorage(Message *msg) {
+    if (msg == NULL) return -1;
+
     node_t *n = malloc(sizeof(*n));
+    if (n == NULL) return -1;
 
     sem_wait(&empty); // decrease the number of empty slots
 
-    msg->tid = pthread_self();
     n->msg = msg;
 
     //insert at end of queue
     STAILQ_INSERT_TAIL(&head, n, nodes);
-
     sem_post(&full); // increase the number of slots with content
 
-    free(n);
-    printf("Written to storage\n");
     return 0;
 }
 
-int readMessageFromStorage(Message *msg){
-    node_t *n = malloc(sizeof(*n));
-
-    //if queue is empty return 
-    if(!STAILQ_EMPTY(&head)) 
-        return 1;
-
+int readMessageFromStorage(Message *msg) {
+    node_t *n;
     sem_wait(&full);// decrease the number of full slots
 
+    //if queue is empty return
+    if (STAILQ_EMPTY(&head)) {
+        return 1;
+    }
     n = STAILQ_FIRST(&head);
-
     STAILQ_REMOVE_HEAD(&head, nodes);
-
-    msg = n->msg;
+    memcpy(msg, n->msg, sizeof(*msg));
 
     sem_post(&empty); // increase the number of slots without content
 
     free(n);
-    printf("Read to storage\n");
     return 0;
 }
 
-void *consumeTask(void *p){
+void *consumeTask(void *p) {
     Message *msg = malloc(sizeof(*msg));
 
-    while (remainingTime() > 0){
-        printf("consumer thread creation \n");
-        if(readMessageFromStorage(msg) > 0) continue;
+    while (remainingTime() > 0) {
+        if (readMessageFromStorage(msg) > 0) {
+            perror("reading from storage");
+            continue;
+        }
         writeToPrivateFifo(msg);
     }
 
     free(msg);
-
     return NULL;
 }
 
 void *handleRequest(void *p) {
     if (p == NULL) return NULL;
     Message *msg = p;
-
-    //msg->tid = pthread_self();
-
     msg->tskres = task(msg->tskload);
-
-    logEvent(TSKEX,msg);
-
+    logEvent(TSKEX, msg);
     writeMessageToStorage(msg);
-
-    
-    /*
-    if (writeToPublicFifo(msg) == 0) {
-        // successfully sent the request
-        logEvent(IWANT, msg);
-        if (readFromPrivateFifo(msg, private_fifo) != 0) {
-            // client could no longer wait for server's response
-            logEvent(GAVUP, msg);
-        } else {
-            // client's request was not attended due to server's timeout
-            if (msg->tskres == -1) logEvent(CLOSD, msg);
-            // client's request successfully attended by the server
-            else
-            logEvent(GOTRS, msg);
-        }
-    }*/
-    free(p);
-
     return NULL;
 }
 
-/*int assembleMessage(int request_number, Message *msg) {
-    if (msg == NULL) return -1;
-    *msg = (Message) {
-            .rid = request_number,
-            .pid = getpid(),
-            .tskload = generateNumber(1, 9),
-            .tskres = -1,
-    };
-    return 0;
-}*/
-
 void generateThreads() {
     int request_number = 0;
-
     pthread_t consumer;
     pthread_create(&consumer, NULL, consumeTask, NULL);
-
     pthread_t tid;
     pthread_t *existing_threads = malloc(NUMBER_OF_THREADS * sizeof(*existing_threads));
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
 
-    while (request_number < NUMBER_OF_THREADS &&
-            remainingTime() > 0 ) {
-        
+    while (request_number < NUMBER_OF_THREADS && remainingTime() > 0) {
         Message *msg = malloc(sizeof(*msg));
-
         if (msg == NULL) continue;
-        if(readFromPublicFifo(msg) == 0 ){
-            logEvent(RECVD,msg);
+        if (readFromPublicFifo(msg) == 0) {
+            logEvent(RECVD, msg);
             pthread_create(&tid, NULL, handleRequest, msg);
             existing_threads[request_number] = tid;
             ++request_number;
         }
     }
-
-    for (int i = 0; i < request_number; ++i)
-        pthread_join(existing_threads[i], NULL);
-
+    for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
     pthread_join(consumer, NULL);
-
     free(existing_threads);
-
-    //if the quque is not empty do something with the rest of the messages 
-    /**while(!STAILQ_EMPTY(&head)){
-        //struct node *n = malloc(sizeof(node_t));
-        //Message *msg = malloc(sizeof(Message));
-
-        STAILQ_REMOVE_HEAD(&head, nodes);
-    }**/
-    
-    
 }
 
-
 int main(int argc, char *argv[]) {
+
+    signal(SIGPIPE, SIG_IGN);
+
     start_time = time(NULL);
-
-
     printf("Initial time: %ld", start_time);
     fflush(stdout);
-    
+
+    char *fifo_name;
     if (parseCommand(argc, argv, &fifo_name, &nsecs, &bufsz)) {
-        fprintf(stderr, "client: parsing error\n");
+        fprintf(stderr, "server: parsing error\n");
         return 1;
     }
-
 
     if (pthread_mutex_init(&read_mutex, NULL)) {
-        perror("client: mutex init");
+        perror("server: mutex init");
         return 1;
     }
 
-    if(bufsz == 0){
-       bufsz = BUFSZ_SIZE;
-    }
+    if (bufsz == 0) bufsz = BUFSZ_SIZE;
 
-    if(createStorage() == -1){
-        perror("server: error creating queue");
-        return 1;
-    }
-
-    sem_init(&empty, 0, bufsz);
-
-	sem_init(&full, 0, 0);
-
-    if(creatPublicFifo() != 0){
+    if (creatPublicFifo(fifo_name) != 0) {
         perror("server: error creating public fifo");
         return 1;
     }
 
-    while (remainingTime() > 0 &&
-        (public = open(fifo_name, O_RDONLY | O_NONBLOCK)) < 0) continue;
+    sem_init(&empty, 0, bufsz);
+    sem_init(&full, 0, 0);
 
+    while (remainingTime() > 0 && (public = open(fifo_name, O_RDONLY | O_NONBLOCK)) < 0) continue;
     if (public < 0) {
-        fprintf(stderr, "client: opening private fifo: took too long\n");
-        return -1;
-    }
-
-    
-    if(createStorage() != 0){
-        perror("server: error creating storage");
+        fprintf(stderr, "server: opening public fifo: took too long\n");
         return -1;
     }
 
@@ -354,14 +262,16 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    sem_destroy(&empty);
-
-    sem_destroy(&full);
-
-    if (pthread_mutex_destroy(&read_mutex)) {
-        perror("client: mutex destroy");
+    if (sem_destroy(&empty) | sem_destroy(&full)) {
+        perror("server: sem destroy");
         return 1;
     }
+
+    if (pthread_mutex_destroy(&read_mutex)) {
+        perror("server: mutex destroy");
+        return 1;
+    }
+    if (removePublicFifo(fifo_name)) return 1;
 
     return 0;
 }
