@@ -57,18 +57,18 @@ int removePublicFifo(const char *fifo_name) {
 }
 
 
-int writeToPrivateFifo(const Message *msg) {
+int writeToPrivateFifo(Message *msg) {
     if (msg == NULL) return -1;
 
     char private_fifo_name[PATH_MAX] = {0};
     namePrivateFifo(msg, private_fifo_name);
 
-    if (fifoExists(private_fifo) != 0){
-        perror("server: private fifo does not exist");
-        msg->tskres = -1;
-        logEvent(FAILD, msg);
-        return -1;
-    }
+    /*  if (fifoExists(private_fifo_name) != 0) {
+          perror("server: private fifo does not exist");
+          msg->tskres = -1;
+          logEvent(FAILD, msg);
+          return -1;
+      }*/
 
     int private = 0;
     while (remainingTime() > 0 && (private = open(private_fifo_name, O_WRONLY | O_NONBLOCK)) < 0) continue;
@@ -235,12 +235,13 @@ void generateThreads() {
         writeToPrivateFifo(msg);
     }
 
-    // handling pendent requests after server's timeout
-    while(readFromPublicFifo(msg) == 0){
-        msg->tskres = -1;
-        if(writeToPrivateFifo(msg) != 0) return;
-        logEvent(_2LATE, msg);
-    }
+    /* // handling pendent requests after server's timeout
+     while (readFromPublicFifo(msg) == 0) {
+         msg->tskres = -1;
+         if (writeToPrivateFifo(msg) != 0) return;
+         logEvent(_2LATE, msg);
+     }*/
+
     for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
     pthread_join(consumer, NULL);
     free(existing_threads);
@@ -265,7 +266,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (bufsz == 0) bufsz = BUFSZ_SIZE;
+    if (bufsz == 0) bufsz = BUF_SIZE;
 
     if (creatPublicFifo(fifo_name) != 0) {
         perror("server: error creating public fifo");
