@@ -2,7 +2,7 @@
 CLIENT_EXECUTABLE := c
 SERVER_EXECUTABLE := s
 
-DELAY:=0000
+DELAY:=10000
 
 # Output build files
 BUILD_DIRECTORY := ./build
@@ -30,7 +30,7 @@ SERVER_OBJECT_FILES := $(SERVER_SOURCE_FILES:%=$(SERVER_BUILD_DIRECTORY)/%.o)
 DEPENDENCIES := $(CLIENT_OBJECT_FILES:.o=.d) $(SERVER_OBJECT_FILES:.o=.d)
 
 # Include directories
-INCLUDE_FLAGS := $(addprefix -I, $(INCLUDE_DIRECTORIES)) -pthread -lrt
+INCLUDE_FLAGS := $(addprefix -I, $(INCLUDE_DIRECTORIES)) -pthread
 
 # Preprocessor flags
 CPPFLAGS := $(INCLUDE_FLAGS) -MMD -MP -DDELAY=$(DELAY)
@@ -61,7 +61,7 @@ $(CLIENT_EXECUTABLE): $(CLIENT_OBJECT_FILES)
 
 $(SERVER_EXECUTABLE): $(SERVER_OBJECT_FILES)
 	@echo "Linking: " $@
-	@$(CC) $(SERVER_OBJECT_FILES) -o $@ $(LDFLAGS) -g
+	@$(CC) $(CLIENT_OBJECT_FILES) -o $@ $(LDFLAGS) -g
 
 .PHONY: clean
 clean:
