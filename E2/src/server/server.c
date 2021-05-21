@@ -63,15 +63,13 @@ int writeToPrivateFifo(Message *msg) {
     char private_fifo_name[PATH_MAX] = {0};
     namePrivateFifo(msg, private_fifo_name);
 
-    /*  if (fifoExists(private_fifo_name) != 0) {
-          perror("server: private fifo does not exist");
-          msg->tskres = -1;
-          logEvent(FAILD, msg);
-          return -1;
-      }*/
-
     int private = 0;
-    while (remainingTime() > 0 && (private = open(private_fifo_name, O_WRONLY | O_NONBLOCK)) < 0) continue;
+    if( (private = open(private_fifo_name, O_WRONLY | O_NONBLOCK) ) == -1){
+        perror("server: could not open private fifo");
+        msg->tskres = -1;
+        logEvent(FAILD, msg);
+        return -1;
+    }
 
     struct pollfd fd;
     const int kmsec = (int) remainingTime() * 1000;
@@ -85,12 +83,12 @@ int writeToPrivateFifo(Message *msg) {
         msg->tskres = -1;
         logEvent(FAILD, msg);
         close(private);
-        return -1;
+        return 1;
     }
 
     if (r == 0) {
         close(private);
-        return -1;
+        return 1;
     }
 
     if ((fd.revents & POLLOUT) && write(private, msg, sizeof(*msg)) < 0) {
@@ -98,7 +96,7 @@ int writeToPrivateFifo(Message *msg) {
         close(private);
         msg->tskres = -1;
         logEvent(FAILD, msg);
-        return -1;
+        return 1;
     }
 
     logEvent(TSKDN, msg);
@@ -130,6 +128,7 @@ int readFromPublicFifo(Message *msg) {
     }
 
     if (r == 0) {
+        perror("nothing to read\n");
         pthread_mutex_unlock(&read_mutex);
         return -1;
     }
@@ -137,7 +136,7 @@ int readFromPublicFifo(Message *msg) {
     if ((fd.revents & POLLIN) && read(public, msg, sizeof(Message)) < 0) {
         pthread_mutex_unlock(&read_mutex);
         perror("server: error reading from public fifo");
-        return -1;
+        return 1;
     }
 
     pthread_mutex_unlock(&read_mutex);
@@ -191,13 +190,16 @@ void *consumeTask(void *p) {
 
     while (remainingTime() > 0) {
         if (readMessageFromStorage(msg) > 0) {
-            perror("reading from storage");
+            perror("reading from storage\n");
             continue;
         }
-        writeToPrivateFifo(msg);
+        if( writeToPrivateFifo(msg) != 0){
+            perror("writing to private fifo\n");
+        }
     }
 
     free(msg);
+
     return NULL;
 }
 
@@ -210,6 +212,83 @@ void *handleRequest(void *p) {
     return NULL;
 }
 
+int readServerClosed(Message *msg){
+    if (msg == NULL) return -1;
+
+
+    const int kmsec = (int) 1000;
+    struct pollfd fd;
+    fd.fd = public;
+    fd.events = POLLIN;
+
+    int r = poll(&fd, 1, kmsec);
+
+    if (r < 0) {
+        perror("server: error opening public fifo");
+        return -1;
+    }
+
+    if (r == 0) {
+        perror("nothing to read\n");
+        return -1;
+    }
+
+    if (read(public, msg, sizeof(Message)) <= 0) {
+        perror("server: error reading from public fifo");
+        return 1;
+    }
+    return (fd.revents & POLLHUP);
+}
+
+
+int writeServerClosed(Message *msg){
+    if (msg == NULL) return -1;
+
+    char private_fifo_name[PATH_MAX] = {0};
+    namePrivateFifo(msg, private_fifo_name);
+
+    int private = 0;
+    if( (private = open(private_fifo_name, O_WRONLY | O_NONBLOCK) ) == -1){
+        perror("server: could not open private fifo");
+        msg->tskres = -1;
+        logEvent(FAILD, msg);
+        return -1;
+    }
+
+    struct pollfd fd;
+    const int kmsec = 5 * 1000;
+    fd.fd = private;
+    fd.events = POLLOUT;
+
+    int r = poll(&fd, 1, kmsec);
+
+    if (r < 0 || (fd.revents & POLLHUP)) {
+        perror("server: error opening private fifo");
+        msg->tskres = -1;
+        logEvent(FAILD, msg);
+        close(private);
+        return -1;
+    }
+
+    if (r == 0) {
+        msg->tskres = -1;
+        logEvent(FAILD, msg);
+        close(private);
+        return -1;
+    }
+
+    if ((fd.revents & POLLOUT) && write(private, msg, sizeof(*msg)) < 0) {
+        perror("server: error writing to private fifo");
+        msg->tskres = -1;
+        logEvent(FAILD, msg);
+        close(private);
+        return -1;
+    }
+
+    close(private);
+    return 0;
+}
+
 void generateThreads() {
     int request_number = 0;
     pthread_t consumer;
@@ -218,7 +297,7 @@ void generateThreads() {
     pthread_t *existing_threads = malloc(NUMBER_OF_THREADS * sizeof(*existing_threads));
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
-
+    
     while (request_number < NUMBER_OF_THREADS && remainingTime() > 0) {
         Message *msg = malloc(sizeof(*msg));
         if (msg == NULL) continue;
@@ -229,21 +308,29 @@ void generateThreads() {
             ++request_number;
         }
 
-        //readMessageFromStorage();
-        //read from storage
-        //receive msg
-        writeToPrivateFifo(msg);
     }
 
-    /* // handling pendent requests after server's timeout
-     while (readFromPublicFifo(msg) == 0) {
-         msg->tskres = -1;
-         if (writeToPrivateFifo(msg) != 0) return;
-         logEvent(_2LATE, msg);
-     }*/
+    Message *msg = malloc(sizeof(*msg));
+    // handling pendent requests after server's timeout
+    while (1) {
+        memset(msg,0,sizeof(*msg));
+        int status = readServerClosed(msg);
+        if(status == 0){
+            logEvent(RECVD, msg);
+        }
+        else if (status == 1){
+            break;
+        }
+        msg->tskres = -1;
+        if(writeServerClosed(msg) != -1){
+            logEvent(_2LATE, msg);
+        }
+    }
+
+    free(msg);
 
     for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
-    pthread_join(consumer, NULL);
+    pthread_cancel(consumer);
     free(existing_threads);
 }
 
@@ -281,6 +368,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "server: opening public fifo: took too long\n");
         return -1;
     }
+
     createStorage();
     generateThreads();
 
