@@ -32,7 +32,13 @@ Do conjunto de funções convém elencar:
 
 - `creatPublicFifo` e `removePublicFifo`: estão encarregues de criar com as permissões necessárias e de remover quando já não for útil, o public fifo com o nome passado como parametro da função.
 
-- `readFromPublicFifo`: lê a informação enviada do servidor para o _named pipe_, colocando-a numa _struct Message_ referenciada por apontador. A _struct pollfd_ permite, desta vez, saber se existe alguma informação pronta a receber ou se um erro ocorreu entretanto (retornando -1). De qualquer forma, o _FIFO_ é encerrado e o espaço ocupado pela _struct Message_ é desalocado antes do término da função.
+- `readFromPublicFifo`: lê a informação enviada por uma thread do cliente para o _named pipe_ público, colocando-a
+  numa _struct Message_ referenciada por apontador. A _struct pollfd_ permite, desta vez, saber se existe alguma
+  informação pronta a receber ou se um erro ocorreu entretanto (retornando -1).
+
+    - O _mutex_ de leitura garante que a leitura do _fifo_ público seja de forma ordenada e intercalada entre threads
+      para não ocorrem conflitos de acesso, originando informação corrompida. Em caso de retorno por erro, é desativado
+      de forma a não perturbar o seu futuro funcionamento.
 
 - `handleRequest`: esta função é chamada aquando da invocação de _pthread_create_, executando o seu papel realizando uma chamada á função fornecida na pasta lib, bem como a escrita do resultado numa queue. A função rege-se da seguinte forma: 
 
@@ -42,12 +48,40 @@ Do conjunto de funções convém elencar:
 
     3. Escreve a resposta obtida pela chamada anterior na _queue_, para uma futura leitura por parte da thread consumidora.
 
+- O armazenamento de Mensagens já executadas pelos servidor é realizado através de uma Singly Linked Tail Queue (
+incluída em sys/queue.h). Recorrendo a várias funções que a estrutura fornece, como STAILQ_INSERT_TAIL, STAILQ_FIRST e
+STAILQ_REMOVE_HEAD, é possível inserir novos nós (que incluem a Mensagem e a lista de entrada para o nó seguinte) no
+fim da fila e retirar o nó inserido há mais tempo do início da fila, garantindo o comportamento _FIFO_.
+
+- De forma a garantir uma coordenação entre a escrita e a leitura no _buffer_ e para que não seja ultrapassado o limite
+de mensagens fornecido no argumento da execução, dois semáforos são iniciados empty com o tamanho do buffer e
+representado o número de slots vazias que podem ser ocupadas por mensagens e full iniciado a 0, que representa as
+slots já ocupadas da fila.
+
 - `createStorage`: encarregue por criar a queue que irá ser usada como armazem.
 
-- `writeMessageToStorage`: este função recebe um mensagem que deverá ser escrita no armazem. Para realizar esta operação fazemos uso de um _semaforo_, caso o espaço necessário disponivel escrita é realizada.
+- `writeMessageToStorage`: chamada numa thread produtora, cria um novo nó com a mensagem fornecida como argumento e
+insere-o no final da queue de armazenamento. Verifica a condição do semáforo empty, garantindo que existe pelo menos
+uma posição livre na fila que pode ser ocupada com o novo nó, decrementando-o o semáforo. Antes de retornar aumenta o
+semáforo full, visto que uma mensagem preencheu a última posição da fila.
 
-- `readMessageFromStorage`: este função tem o dever de ler, caso haja, informação no armazem. Sendo esta a operação contraria á leitura tambem ela contara com o auxilio de um semafora para realizar as suas operaçoes. Returnando no final a mensagem lida.
+- `readMessageFromStorage`: chamada numa thread consumidora, tem como tarefa ler a mensagem mais antiga da fila de
+armazenamento para que possa ser posteriormente escrita na FIFO previda correspondente. Se não existir qualquer
+mensagem para leitura, retorna 1. Verifica a condição do semáforo full, garantindo que existe algo para ser lido e
+decrementando-o. Antes de retornar aumenta o semáforo empty, visto que uma mensagem foi retirada da fila.
 
-- `generateThreads`: lê sucessivamente a public fifo dentro do limite de tempo estabelecido, originando sucessivamente novas threads produtoras que iram realizar a tarefa. O _array_ de _pthread_t_ é vantajoso uma vez que permite a junção - _pthread_join_ - das _threads_ antes do retorno, para não deixar nenhuma órfã. O _loop_ atua enquanto existir um _named pipe_ o tempo não se esgutar, sendo atribuída uma _struct Message_ nova a cada _thread_ antes da sua criação. Por fim o seu _tid_ é armazenado no array. Apos estes passos a thread consumidora irá verificar se o armazem tem algo que possa ser lido, quando esta verificação terminar o loop repete-se. Por fim, o espaço alocado ao _array_ é libertado.
+- `consumeTask`: invocada na criação da thread consumidora. Tem como única responsabilidade ler regularmente a fila de
+  armazenamento de mensagens, retirando uma mensagem a cada iteração do seu _loop_ principal e escrevendo-a para o _
+  FIFO_ de forma a ser recebida do lado do cliente.
+
+- `generateThreads`: Esta função tem o papel de gerar os dois tipos de threads necessárias à execução do programa. Em
+  primeiro lugar, gera a thread consumidora (única para todo o programa) que interliga o _buffer_ de armazenamento e a
+  envio de um dado pedido para o lado do cliente. Por outro lado, no caso de se verificar que existe algo para ser lido
+  na estrutura _fifo_ públic, gera uma thread produtora que irá processar o _request_ e escrever a Mensagem já com a
+  resposta na fila, registando a sua receção com _RECVD_. O _array_ de _pthread_t_ é vantajoso uma vez que permite a
+  junção - _pthread_join_ - das _threads_ antes do retorno, para não deixar nenhuma órfã. Para tal a cada geração de uma
+  thread produtora, o seu _tid_ é registado. A _thread_ consumidora é também reunida com  _pthread_join_. Antes de
+  retornar, esta função liberta todo o espaço em memória necessário à sua execução.
+
 
 - `main`: responsável por ler e validar o comando proveniente do terminal, de inicializar e terminar o _mutex_ utilizado, abrir e fechar o _named pipe_ público e invocar a função `generateThreads`;
