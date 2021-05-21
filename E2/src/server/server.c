@@ -10,7 +10,6 @@
 #include <limits.h>
 #include <sys/types.h>
 #include <semaphore.h>
-#include <assert.h>
 #include <poll.h>
 #include <sys/queue.h>
 
@@ -191,20 +190,17 @@ int readMessageFromStorage(Message *msg) {
 }
 
 void *consumeTask(void *p) {
-    Message *msg = malloc(sizeof(*msg));
+    Message msg;
 
     while (1) {
-        if (readMessageFromStorage(msg) > 0) {
+        if (readMessageFromStorage(&msg) > 0) {
             perror("reading from storage\n");
             continue;
         }
-        if( writeToPrivateFifo(msg) != 0){
+        if( writeToPrivateFifo(&msg) != 0){
             perror("writing to private fifo\n");
         }
     }
-
-    free(msg);
-
     return NULL;
 }
 
@@ -288,10 +284,6 @@ int main(int argc, char *argv[]) {
     createStorage();
     generateThreads();
 
-    /*if (close(public) < 0) {
-        perror("server: error closing public fifo");
-        return -1;
-    }*/
 
     if (sem_destroy(&empty) | sem_destroy(&full)) {
         perror("server: sem destroy");
