@@ -90,6 +90,7 @@ int writeToPrivateFifo(Message *msg) {
     }
 
     if (r == 0) {
+        logEvent(FAILD, msg);
         close(private);
         return 1;
     }
@@ -102,7 +103,8 @@ int writeToPrivateFifo(Message *msg) {
         return 1;
     }
 
-    logEvent(TSKDN, msg);
+    if(msg->tskres == -1) logEvent(_2LATE, msg);
+    else logEvent(TSKDN, msg);
     close(private);
     return 0;
 }
@@ -191,7 +193,7 @@ int readMessageFromStorage(Message *msg) {
 void *consumeTask(void *p) {
     Message *msg = malloc(sizeof(*msg));
 
-    while (!closeServer || remainingTime() > 0) {
+    while (1) {
         if (readMessageFromStorage(msg) > 0) {
             perror("reading from storage\n");
             continue;
@@ -218,6 +220,7 @@ void *handleRequest(void *p) {
 }
 
 void generateThreads() {
+    int counter = 0;
     int request_number = 0;
     pthread_t consumer;
     pthread_create(&consumer, NULL, consumeTask, NULL);
@@ -226,7 +229,7 @@ void generateThreads() {
     if (existing_threads == NULL) return;
     memset(existing_threads, 0, sizeof(*existing_threads));
     
-    while (request_number < NUMBER_OF_THREADS && (!closeServer || remainingTime() > 0)) {
+    while (request_number < NUMBER_OF_THREADS && counter < 10000 ) {
         Message *msg = malloc(sizeof(*msg));
         if (msg == NULL) continue;
         if (readFromPublicFifo(msg) == 0) {
@@ -234,29 +237,13 @@ void generateThreads() {
             pthread_create(&tid, NULL, handleRequest, msg);
             existing_threads[request_number] = tid;
             ++request_number;
+            counter = 0;
+        }else{
+            counter++;
         }
 
+        if(remainingTime() < 0) close(public);
     }
-
-    
-    /*Message *msg = malloc(sizeof(*msg));
-    // handling pendent requests after server's timeout
-    while (1) {
-        memset(msg,0,sizeof(*msg));
-        int status = readServerClosed(msg);
-        if(status == 0){
-            logEvent(RECVD, msg);
-        }
-        else if (status == 1){
-            break;
-        }
-        msg->tskres = -1;
-        if(writeServerClosed(msg) != -1){
-            logEvent(_2LATE, msg);
-        }
-    }*/
-
-    //free(msg);
 
     for (int i = 0; i < request_number; ++i) pthread_join(existing_threads[i], NULL);
     pthread_cancel(consumer);
@@ -301,10 +288,10 @@ int main(int argc, char *argv[]) {
     createStorage();
     generateThreads();
 
-    if (close(public) < 0) {
+    /*if (close(public) < 0) {
         perror("server: error closing public fifo");
         return -1;
-    }
+    }*/
 
     if (sem_destroy(&empty) | sem_destroy(&full)) {
         perror("server: sem destroy");
